@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.55.1] - 2026-09-28
+
+### Improved
+- **Sprite's agent opens the Export tab itself.** It now looks at the tab and captures it before handing off, instead of reading the file list. `navigate-to` takes an optional `tab`.
+- **Every paid video helper says what it cost.** Video background removal, frame interpolation and H3 video now print a cost line, like cut-outs and Seedance already did. When a price can't be established, the line says why instead of guessing. The green-screen matte price follows fal's current list, $0.025 per 30 frames.
+
+### Fixed
+- **A motion keeps its edge-fringe measurement.** `keyFringe` now reaches the project record, and the Inspect panel shows it next to the plate-colour residue against the same thresholds the scripts use.
+
 ## [3.55.0] - 2026-09-27
 
 ### Added
