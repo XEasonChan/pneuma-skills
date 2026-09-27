@@ -14,7 +14,7 @@
  *      align → pack → gif → inspect (skipped without ffmpeg).
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -694,7 +694,8 @@ function readPng(path: string): RgbaImage {
 describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs breathe", () => {
   const root = mkdtempSync(join(tmpdir(), "breathe-cli-"));
   const still = join(root, "still.png");
-  writePng(still, antialiased());
+  // A skipped describe still runs its body, so the ffmpeg write waits for a test.
+  beforeAll(() => writePng(still, antialiased()));
 
   test("writes NN.png frames, reports the anatomy in the still's coordinates, and keeps the head", () => {
     const out = join(root, "a", "cells");

@@ -15,7 +15,7 @@
  * Layers 2 and 3 need ffmpeg and skip without it, like every CLI suite here.
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -254,7 +254,8 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs fit", () => {
 describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs breathe --name", () => {
   const root = mkdtempSync(join(tmpdir(), "route-a-breathe-"));
   const still = join(root, "still.png");
-  writePng(still, character({ pole: true }));
+  // A skipped describe still runs its body, so the ffmpeg write waits for a test.
+  beforeAll(() => writePng(still, character({ pole: true })));
 
   test("cuts the whole motion and prints the run summary register-run takes", () => {
     const motionDir = join(root, "idle");
