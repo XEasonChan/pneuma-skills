@@ -22,8 +22,13 @@ import { loadRoster, saveRoster } from "./domain.js";
 
 const spriteManifest: ModeManifest = {
   name: "sprite",
-  version: "0.5.0",
+  version: "0.5.1",
   changelog: {
+    "0.5.1": [
+      "Before handing a character over, the agent opens the Export tab and looks at it the way you will, instead of reading a file list",
+      "The green rim a key can leave on an edge is now kept with each motion and shown beside the leftover plate colour, each against the limit the checks warn at",
+      "Video matting, frame interpolation and MiniMax clips say what they cost after each run, like the other paid steps",
+    ],
     "0.5.0": [
       "Four routes shape the session around what you are making — a game character, a looping animation for a page, a mascot for an app, or your own picture brought to life — so you answer one plain question instead of choosing settings, and hear the price and the wait before anything paid runs",
       "Bring a picture to life: upload an image and it starts breathing in seconds, free, with no model call, and the motion remembers how far the head rides each breath",
@@ -188,9 +193,14 @@ const spriteManifest: ModeManifest = {
               "ViewerAddress, e.g. `{ \"contentSet\": \"lumi\", \"motion\": \"attack\", \"frame\": 7 }`. `motion` selects a motion; `ref` opens a reference image in the stage instead (mutually exclusive with `motion`); `frame` seeks to that 0-based frame and pauses.",
             required: true,
           },
+          tab: {
+            type: "string",
+            description:
+              "Optional panel tab to open for the motion on stage: `gif`, `loop`, `video`, `atlas` or `export`. Omit it and the panel keeps its tab unless that tab has nothing of this motion's. A tab the motion does not have (Export before it is ready, GIF on a loop) is refused with the tabs it has; the stage still moves.",
+          },
         },
         description:
-          "Point the stage at a character, a motion, a reference, or one frame. Call it before `capture` so you screenshot what you mean, and after finishing a motion so the user lands on the thing you just made.",
+          "Point the stage at a character, a motion, a reference, or one frame, and optionally open a panel tab (`tab`). Call it before `capture` so you screenshot what you mean, and after finishing a motion so the user lands on the thing you just made. To look at a tab, open it here, then `capture` with `{ \"selector\": \"[data-sprite-panel]\" }` — a plain capture shows the stage only.",
       },
       {
         id: "play",
@@ -239,7 +249,7 @@ const spriteManifest: ModeManifest = {
           },
         },
         description:
-          "Read back what the stage is actually showing: `{ contentSet, motion, kind, frame, frameCount, fps, loop, playing, source: \"frames\" | \"raw-sheet\" | \"keyframe\" | \"none\", warnings }`. Call it after a pipeline run — `source: \"raw-sheet\"` or a frameCount that disagrees with the grid means the run did not land, whatever the script printed. `kind` is `\"loop\"` on a loop motion and absent on a sprite motion; `source: \"keyframe\"` is a loop showing the image its clip starts and ends on because no frames exist yet, which is expected while the clip renders.",
+          "Read back what the stage is actually showing: `{ contentSet, motion, kind, frame, frameCount, fps, loop, playing, source: \"frames\" | \"raw-sheet\" | \"keyframe\" | \"none\", tab, warnings }` — `tab` is the panel tab on screen for the motion on stage. Call it after a pipeline run — `source: \"raw-sheet\"` or a frameCount that disagrees with the grid means the run did not land, whatever the script printed. `kind` is `\"loop\"` on a loop motion and absent on a sprite motion; `source: \"keyframe\"` is a loop showing the image its clip starts and ends on because no frames exist yet, which is expected while the clip renders.",
       },
     ],
     // User → agent. The viewer renders these only while `editing !== false`,

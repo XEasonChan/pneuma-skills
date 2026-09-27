@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import type { ViewerFileContent } from "../../../core/types/viewer-contract.js";
 import spriteManifest from "../manifest.js";
+import { PANEL_TABS } from "../viewer/panel.js";
 import spriteMode, {
   extractSpriteContext,
   resolveSpriteItems,
@@ -311,6 +312,19 @@ describe("extractContext — routes, directions, breathe and mirror", () => {
     expect(withPixel(undefined)).not.toContain("Pixel lattice");
   });
 
+  test("the context says what the key left on the edge, against the bars inspect warns above", () => {
+    const withKey = (key: Record<string, unknown>) => {
+      const body = JSON.parse(withWalk());
+      Object.assign(body.sprite.motions[0].inspect, key);
+      const motionId = body.sprite.motions[0].id;
+      return extractSpriteContext({ address: { contentSet: "mini", motion: motionId } } as never, files({ "mini/project.json": JSON.stringify(body) }));
+    };
+    expect(withKey({ keyResidue: 0.0036, keyFringe: 0.0373 }))
+      .toContain("Key: keyResidue 0.0036 (limit 0.005), keyFringe 0.0373 (limit 0.01, over)\n");
+    expect(withKey({ keyFringe: 0 })).toContain("Key: keyFringe 0 (limit 0.01)\n");
+    expect(withKey({})).not.toContain("Key:");
+  });
+
   test("an anchor reference says which way it faces", () => {
     expect(at({ contentSet: "mini", ref: "anchor-left" })).toContain('Reference: "Anchor left" (anchor-left, role anchor, faces left)');
   });
@@ -409,6 +423,20 @@ describe("the definition and the manifest agree", () => {
     expect(actions.map((a) => a.id)).not.toContain("capture");
   });
 
+  test("navigate-to advertises every panel tab it can open, and how to capture one", () => {
+    // The agent learns the tab names from this description alone; a tab the
+    // viewer accepts and the description hides is a tab nobody opens.
+    const navigate = spriteManifest.viewerApi!.actions!.find((a) => a.id === "navigate-to")!;
+    const tab = navigate.params!.tab!;
+    expect({ type: tab.type, required: tab.required ?? false }).toEqual({ type: "string", required: false });
+    for (const name of PANEL_TABS) expect(tab.description).toContain(`\`${name}\``);
+    // A full capture answers with the stage canvas, so the panel is captured
+    // by the selector the viewer puts on it.
+    expect(navigate.description).toContain("[data-sprite-panel]");
+    const state = spriteManifest.viewerApi!.actions!.find((a) => a.id === "get-playback-state")!;
+    expect(state.description).toContain("tab");
+  });
+
   test("get-playback-state advertises `kind`, the loop discriminator", () => {
     // The stage reports `kind: "loop"` for a loop motion and omits it for a
     // sprite motion. The agent reads the shape out of this description and
@@ -493,8 +521,21 @@ describe("the definition and the manifest agree", () => {
     }
   });
 
+  test("0.5.1 fixes three leftovers, in the user's words", () => {
+    expect(spriteManifest.version).toBe("0.5.1");
+    const notes = spriteManifest.changelog!["0.5.1"];
+    expect(notes.length).toBeGreaterThanOrEqual(1);
+    expect(notes.length).toBeLessThanOrEqual(3);
+    for (const note of notes) {
+      expect(note).not.toMatch(/`|\*\*|^- /);
+      expect(note.endsWith(".")).toBe(false);
+      expect(note).not.toMatch(/\.mjs|--[a-z]|\.json\b/);
+    }
+    const text = notes.join(" ");
+    for (const claim of [/Export tab/, /edge/i, /cost/i]) expect(text).toMatch(claim);
+  });
+
   test("0.5.0 is the routes release, and says so in the user's words", () => {
-    expect(spriteManifest.version).toBe("0.5.0");
     // Every release's notes keep the manifest style: plain sentences, no
     // markdown, no trailing period — the launcher prints them as bullets.
     for (const version of ["0.5.0", "0.4.0"]) {
