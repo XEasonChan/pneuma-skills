@@ -32,6 +32,7 @@
  */
 
 import type { ViewerFileContent } from "../../core/types/viewer-contract.js";
+import { RecolorError, checkVariant, variantNameProblem } from "./skill/scripts/recolor.mjs";
 
 // ── Craft-owned shapes (mirrors modes/clipcraft/persistence.ts) ─────────────
 
@@ -81,6 +82,75 @@ export interface SpriteComposition {
 
 // ── Sprite sidecar ─────────────────────────────────────────────────────────
 
+/**
+ * What the user is making — the route the agent took (0.5.0). Recorded so a
+ * later session does not ask again, the rail's empty hint names the right
+ * next ask, and the Export tab lists the families this character is for
+ * first. Absent means the route was never recorded (every 0.4.x character):
+ * the agent infers or asks, exactly as before.
+ *
+ * Sub-routes are deliberately not values here: pixel art is `character.pixel`
+ * and the directions are the anchor refs.
+ */
+export const CHARACTER_PURPOSES = ["game", "loop", "mascot", "animate"] as const;
+
+export type CharacterPurpose = (typeof CHARACTER_PURPOSES)[number];
+
+/**
+ * The four directions a motion or an anchor can face. Diagonals are an
+ * 8-direction game's need nobody has asked for; the tuple can grow. "Side"
+ * is not a direction: `character.facing` names the side that is generated,
+ * and the other side is a `mirror` of it.
+ */
+export const DIRECTIONS = ["front", "back", "left", "right"] as const;
+
+export type Direction = (typeof DIRECTIONS)[number];
+
+/**
+ * The one authority for "this character is pixel art" (0.5.0). Absent means
+ * it is not — older characters fall back to reading `style`
+ * (`rive-plan.mjs`'s `riveIsPixelArt`).
+ */
+export interface PixelSpec {
+  /** The character's height in logical pixels — the user's answer, which
+   *  every pixel run snaps to. */
+  logicalHeight: number;
+  /** Asset id `<character>-palette` (text, `palette.json`), pinned by the
+   *  first pixel run's `register-run`. Absent until pinned. */
+  palette?: string;
+  /** The palette size asked for, then the size it was pinned with. */
+  colors?: number;
+  /** The character's colourways, recorded by `register-recolor`; absent
+   *  until one is. See `PixelVariant`. */
+  variants?: PixelVariant[];
+}
+
+/**
+ * One colourway of a pixel-art character — "red-team": a map from some of
+ * its pinned palette's colours to others, baked into new files by
+ * `sprite-sheet.mjs recolor`. Recorded once, here; each motion names the
+ * files its bake left (`Motion.variants`). The rules (a slug name, `#rrggbb`
+ * colours, a tolerance of 1–255, or 0 / none for exact — 0 is never
+ * stored) are `recolor.mjs`'s —
+ * the writer checks with them and this loader drops what fails them.
+ */
+export interface PixelVariant {
+  name: string;
+  /** Source `#rrggbb` → target, in the order a tolerance tie goes by. */
+  map: Record<string, string>;
+  /** Absent: exact. Else a pixel within this Chebyshev distance of a source
+   *  takes the nearest source's target. */
+  tolerance?: number;
+}
+
+/** A motion's files for one colourway, as asset ids
+ *  (`<motion>-variant-<name>-sheet|atlas|gif`). */
+export interface MotionVariantFiles {
+  sheet: string;
+  atlas: string;
+  gif?: string;
+}
+
 export interface SpriteCharacter {
   name: string;
   /** One paragraph the agent keeps current. */
@@ -90,9 +160,19 @@ export interface SpriteCharacter {
   /** Default frame cell in px. */
   cell: { width: number; height: number };
   facing?: "left" | "right";
+  /** The route this character is for; see `CharacterPurpose`. */
+  purpose?: CharacterPurpose;
+  /** Present only for a pixel-art character; see `PixelSpec`. */
+  pixel?: PixelSpec;
+  /**
+   * Side-specific features that must not flip, as one sentence ("the sword
+   * is always in the right hand"). It refuses `mirror` without `--force` and
+   * becomes the identity guard of every built sheet prompt.
+   */
+  asymmetric?: string;
 }
 
-export type SpriteRefRole = "turnaround" | "portrait" | "expression" | "custom";
+export type SpriteRefRole = "turnaround" | "portrait" | "expression" | "anchor" | "custom";
 
 export interface SpriteRef {
   /** The `ref` address key, e.g. `"turnaround"`. */
@@ -101,6 +181,12 @@ export interface SpriteRef {
   asset: string;
   role: SpriteRefRole;
   label: string;
+  /**
+   * The one direction an `anchor` faces — one single-pose image per
+   * direction. Present exactly when `role === "anchor"`: an anchor without
+   * one loads as `custom`, and no other role carries one.
+   */
+  direction?: Direction;
 }
 
 /** Declared order is the lifecycle order. The tuple is the single source of
@@ -182,6 +268,15 @@ export interface InspectSummary {
    */
   anchorPoint?: { x: number; y: number };
   /**
+   * Frames aligned with `--y-from cell` (a jump drawn or filmed rising):
+   * how high each frame's feet stand above the ground, in px — one entry per
+   * frame, `null` for an empty one. All zeros means the source carries no
+   * drawn height. Absent for every other alignment; a list that is not one
+   * entry per frame, or holds anything but a number or null, is dropped whole
+   * (an entry means its frame, so it cannot be repaired).
+   */
+  lift?: Array<number | null>;
+  /**
    * The agent accepted the remaining warnings with a one-sentence reason
    * (round 2). The viewer dims the badge but keeps every number visible.
    */
@@ -200,6 +295,35 @@ export interface InspectSummary {
    * only when the report carried a finite number.
    */
   bodyDrift?: number;
+  /**
+   * Std-dev in px of the head-and-torso x across frames, each frame's top
+   * band registered against the first frame's — a region no alignment pins.
+   * `bodyDrift` is the spread of the very line `align --x-from feet` pins, so
+   * it reads ~0 after that alignment whatever the body did; a walk whose
+   * planted foot was pinned lurches by the stride, and this is the number
+   * that shows it. Optional for `bodyDrift`'s reason.
+   */
+  headDrift?: number;
+  /**
+   * The same head-and-torso spread measured on the pre-align cells (the clip
+   * as filmed, the grid as drawn) with its straight-line drift removed — the
+   * sway the motion itself has. `headDrift` well past it is sway the
+   * alignment added. Absent when the motion has no cells to measure.
+   */
+  sourceHeadDrift?: number;
+  /**
+   * Adjacent frames that barely differ — `[from, to]` pairs whose step (mean
+   * RGBA difference at 64×64) is under 0.01: the animation holds there.
+   * `[last, 0]` is the wrap of a looping motion. Absent on a report from
+   * before the check existed; `[]` when it ran and found none.
+   */
+  nearDuplicates?: Array<[number, number]>;
+  /**
+   * Row boundaries of the source grid whose step jumps well past the steps
+   * inside the rows — the sheet's rows drawn as separate sequences. Same
+   * `[from, to]` pairs and the same absent-versus-empty rule.
+   */
+  rowJumps?: Array<[number, number]>;
   /** Largest anchor displacement between consecutive frames. */
   maxJump: number;
   /** (max bbox height − min bbox height) / mean. */
@@ -217,10 +341,20 @@ export interface InspectSummary {
   // would be indistinguishable from a measurement. Present only when the
   // report carried a finite number.
 
-  /** Silhouette distance from the last kept frame back to the first. */
+  /**
+   * Distance from the last kept frame back to the first: the mean difference
+   * of premultiplied RGBA thumbnails since `loop` measured colour (a blink
+   * or a swapped leg at the wrap counts), silhouette distance before that.
+   */
   seam?: number;
-  /** Median frame-to-frame silhouette distance — what `seam` is judged against. */
+  /** Median frame-to-frame distance, in `seam`'s units — what it is judged against. */
   step?: number;
+  /**
+   * The bar `seam` was judged against by the run that measured it —
+   * `max(2 × step, noise floor)`. Absent on a loop cut before `loop` recorded
+   * it, and then the reader falls back to `2 × step`, the rule that run used.
+   */
+  seamLimit?: number;
   /**
    * How many in-between frames `loop --seam-fill` inserted at the wrap, after
    * which `seam` is the largest step across it. 0 means the loop closed on its
@@ -231,6 +365,17 @@ export interface InspectSummary {
   seamFill?: number;
   /** Fraction of the frame area that is opaque, averaged over the frames. */
   alphaCoverage?: number;
+  /**
+   * Share of the visible pixels (alpha at or above the threshold) that still
+   * carry the chroma plate's hue — every keyed channel above every other by
+   * more than 40 — pooled over the frames: the fringe a key left, or colour
+   * the character really has. Measured by `from-video`, `loop`, `transition`,
+   * `run` and `inspect` on a motion keyed off a hued plate; above 0.005 the
+   * report warns. Absent when nothing was keyed or the plate had no hue
+   * (white, cream, grey) — 0 is the best reading there is, so it follows the
+   * finite-or-absent rule.
+   */
+  keyResidue?: number;
   /**
    * Transitions only: how far the first frame is from the `from` loop's
    * frame 0, and the last from the `to` loop's, as silhouette distance in
@@ -251,6 +396,37 @@ export interface InspectSummary {
    * recorded — never a default of 1.
    */
   scale?: number;
+  /**
+   * Frames that went through `pixel` only: whether they still sit on their
+   * lattice. See `PixelLatticeCheck`. Absent on every other motion, and on a
+   * pixel motion registered before `register-run` kept it.
+   */
+  pixel?: PixelLatticeCheck;
+}
+
+/**
+ * `inspect`'s check of a pixel run's frames against the lattice `pixel` cut
+ * them to, as `register-run` keeps it. The palette's path stays in the run
+ * summary (the character's `PixelSpec.palette` names the pinned palette).
+ */
+export interface PixelLatticeCheck {
+  /** Source px per logical px `pixel` cut at, per axis (fractional). */
+  pitch: { x: number; y: number };
+  /** The whole-number upscale each logical px was written at. */
+  scale: number;
+  /**
+   * Alpha only 0 or 255, every scale×scale block one colour, and — when
+   * `paletteChecked` — every colour a pinned-palette colour. False names the
+   * frames below; the inspect warnings say what to do.
+   */
+  held: boolean;
+  /** False when no palette could be held to, or `--outline` darkened the
+   *  edge on purpose. */
+  paletteChecked: boolean;
+  /** Each present only when some frame broke the lattice that way. */
+  softAlphaFrames?: number[];
+  offGridFrames?: number[];
+  offPaletteFrames?: number[];
 }
 
 /**
@@ -306,7 +482,7 @@ export interface LoopBrief {
  * the Export tab lists them. The tuple is the single source of truth: the
  * type is derived from it, and the parser drops any key that is not in it.
  */
-export const EXPORT_FORMATS = ["mp4", "mov", "webm", "apng", "lottie", "png-seq"] as const;
+export const EXPORT_FORMATS = ["mp4", "mov", "webm", "apng", "lottie", "png-seq", "aseprite"] as const;
 
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
@@ -322,10 +498,12 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
  */
 export type MotionExports = Partial<Record<ExportFormat, string>>;
 
-/** The character-level exports: one `.riv` of the character's motions —
- *  loops resampled — asset id `<character>-export-riv`. */
+/** The character-level exports, each asset id `<character>-export-<key>`:
+ *  one `.riv` of the character's motions — loops resampled — and one
+ *  Aseprite sheet of its sprite motions, a frame tag each. */
 export interface CharacterExports {
   riv?: string;
+  aseprite?: string;
 }
 
 /**
@@ -344,11 +522,107 @@ export interface LoopClip {
   from: "measured";
 }
 
+/**
+ * How a motion's frames were obtained. Absent means `"sheet"` (round 2).
+ *
+ * `breathe` frames are warps of ONE still (`BreatheRecord`), made locally in
+ * seconds; `mirror` frames are another motion's frames flipped left↔right
+ * (`Motion.mirrorOf`). Neither was drawn frame by frame, which is why the
+ * stage does not offer to realign them.
+ */
+export const MOTION_SOURCES = ["sheet", "video", "breathe", "mirror"] as const;
+
+export type MotionSource = (typeof MOTION_SOURCES)[number];
+
+/** What `sprite-sheet.mjs breathe` did, as `register-run` recorded it. */
+export interface BreatheRecord {
+  /** Asset id of the still the frames were warped from. */
+  still: string;
+  /** The total stretch, as a share of the body below the neck. */
+  depth: number;
+  /** Whole breaths in one loop of the motion. */
+  breaths: number;
+  /** How far the head trails the chest, as a fraction of a breath. */
+  lag: number;
+  /** Whole pixels (pixel art) or bilinear, premultiplied (painted art). */
+  mode: "smooth" | "pixel";
+  /**
+   * The boundary the warp actually used, in the still's pixels, and whether
+   * it was detected or given — what the agent needs to answer "the head
+   * wobbles" with `--rigid-row` on the next run. `torsoHalf` is present only
+   * when a manual torso band was given: it changes what is pushed rather than
+   * stretched, so a re-run has to be given it again.
+   */
+  anatomy?: { rigidRow: number; axisX: number; from: "detected" | "override"; torsoHalf?: number };
+  /**
+   * Where the head rode across the frames, in whole px of image y (negative
+   * is up): the range, the travel between its ends, and the frames at each
+   * end — the answer to "how far does the head move". Absent on a breathe
+   * registered before `breathe` reported it; dropped on its own when
+   * malformed, the rest of the record stands.
+   */
+  headOffset?: { min: number; max: number; travel: number; highest: number[]; lowest: number[] };
+}
+
+/** Why `run` sliced a sheet by its poses' ink rather than on the fixed grid. */
+export const SLICE_REASONS = ["asked", "grid-clipped"] as const;
+/** What an auto-sliced pose ran into: the sheet's edge, or a neighbour it was
+ *  drawn touching and had to be cut apart from. */
+export const CLIP_REASONS = ["sheet-edge", "cut"] as const;
+
+/**
+ * A sheet motion whose cells `run` found by the poses' ink (`slice --auto`,
+ * `run --auto-slice`, or the fallback when the fixed grid cut through a pose),
+ * as `register-run` kept it. The cut lines, the grown cell and each pose's
+ * box stay in the run summary and `cells/slice.json`; this is what tells the
+ * agent which cells to look at. Absent means the fixed grid.
+ */
+export interface SliceRecord {
+  mode: "auto";
+  /** `"asked"`, or `"grid-clipped"`: the fixed grid cut through a pose. */
+  reason: (typeof SLICE_REASONS)[number];
+  /** `"grid-clipped"` only: the cells the fixed grid cut through. */
+  gridClipped?: number[];
+  /** Whether the row count, and per row its pose count, had to be forced to
+   *  what was asked (cut at the thinnest lines) — the blank bands showed another. */
+  forced: { rows: boolean; cols: boolean[] };
+  /** Poses clipped anyway, by frame index. `[]` is a result: none. */
+  clipped: Array<{ index: number; why: (typeof CLIP_REASONS)[number] }>;
+}
+
+/** A layout guide's geometry, as the prompt that used it described it. */
+export interface PromptGuide {
+  rows: number;
+  cols: number;
+  cell: { width: number; height: number };
+  safeMargin: { x: number; y: number };
+}
+
+/**
+ * How a motion's `prompt` was assembled when code built it
+ * (`sprite-project.mjs sheet-prompt`). The same `builder` and parts give the
+ * same text, which is what makes a guard or guide experiment reproducible.
+ * Absent means the prompt was written by hand.
+ */
+export interface PromptParts {
+  /** The code version that assembled the prompt, e.g. `"sheet-prompt/1"`. */
+  builder: string;
+  /** The agent's action / phase plan, verbatim. */
+  action: string;
+  /** Conditional clause ids included: `"state:walk"`, `"direction:left"`, `"row-continuity"`, … */
+  guards: string[];
+  guide?: PromptGuide;
+}
+
 export interface Motion {
   id: string;
   label: string;
   /** The sheet prompt actually sent. */
   prompt: string;
+  /** Present when `prompt` was built by code; see `PromptParts`. */
+  promptParts?: PromptParts;
+  /** The direction this motion faces; its id is then `<state>-<direction>`. */
+  direction?: Direction;
   /** Absent means a sprite motion; see `MotionKind`. */
   kind?: MotionKind;
   /** Loop and transition motions: the interview's answers, recorded before
@@ -371,7 +645,13 @@ export interface Motion {
   /** Failure reason or agent remarks. */
   notes?: string;
   /** How the frames were obtained; absent means `"sheet"` (round 2). */
-  source?: "sheet" | "video";
+  source?: MotionSource;
+  /** `source: "mirror"` only: the motion whose frames these flip. */
+  mirrorOf?: string;
+  /** `source: "breathe"` only: what the warp was made from and with. */
+  breathe?: BreatheRecord;
+  /** Sheet motions only (`source` absent or `"sheet"`): an auto slice's findings. */
+  slice?: SliceRecord;
   /** Loop motions: the generated keyframe, white plate, as it came back. */
   keyframe?: string;
   /** Loop motions: the same keyframe with its background removed. */
@@ -387,6 +667,9 @@ export interface Motion {
   /** Exports by format: a loop's own APNG / WebM / Lottie, and any format
    *  exported on demand. See `MotionExports`. */
   exports?: MotionExports;
+  /** Sprite motions of a pixel-art character: each colourway's baked files,
+   *  by colourway name (`PixelSpec.variants`). */
+  variants?: Record<string, MotionVariantFiles>;
   videos: MotionVideo[];
   inspect?: InspectSummary;
   /** Loop motions cut before `loop` recorded their crop: see `LoopClip`. */
@@ -530,30 +813,65 @@ function parseFinite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/**
+ * A list of `[from, to]` frame pairs, or undefined when the key is not an
+ * array at all. A malformed entry is dropped rather than the whole list, and
+ * an empty list survives: "checked, found none" is not "never checked".
+ */
+function parseFramePairs(value: unknown): Array<[number, number]> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const frameIndex = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0;
+  return value
+    .filter((pair): pair is [number, number] => Array.isArray(pair) && pair.length === 2 && frameIndex(pair[0]) && frameIndex(pair[1]))
+    .map(([from, to]) => [from, to] as [number, number]);
+}
+
+/** A `--y-from cell` lift, whole, or undefined: see `InspectSummary.lift`. */
+function parseLift(value: unknown, frameCount: unknown): Array<number | null> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (typeof frameCount === "number" && Number.isInteger(frameCount) && value.length !== frameCount) return undefined;
+  return value.every((v) => v === null || parseFinite(v) !== undefined)
+    ? (value as Array<number | null>).slice()
+    : undefined;
+}
+
 function parseInspect(value: unknown): InspectSummary | undefined {
   if (!isRecord(value)) return undefined;
   const cell = isRecord(value.cell) ? value.cell : {};
   const drift = isRecord(value.anchorDrift) ? value.anchorDrift : {};
   const anchorPoint = parsePoint(value.anchorPoint);
+  const lift = parseLift(value.lift, value.frameCount);
   const acknowledged = parseAcknowledged(value.acknowledged);
   const bodyDrift = parseFinite(value.bodyDrift);
+  const headDrift = parseFinite(value.headDrift);
+  const sourceHeadDrift = parseFinite(value.sourceHeadDrift);
+  const nearDuplicates = parseFramePairs(value.nearDuplicates);
+  const rowJumps = parseFramePairs(value.rowJumps);
   const seam = parseFinite(value.seam);
   const step = parseFinite(value.step);
+  const seamLimit = parseFinite(value.seamLimit);
   const seamFill = parseFinite(value.seamFill);
   const alphaCoverage = parseFinite(value.alphaCoverage);
+  const keyResidue = parseFinite(value.keyResidue);
   const startGap = parseFinite(value.startGap);
   const endGap = parseFinite(value.endGap);
   const crop = parseClipRect(value.crop);
   const scale = parseFinite(value.scale);
+  const pixel = parseLatticeCheck(value.pixel);
   return {
     frameCount: num(value.frameCount, 0),
     cell: { width: num(cell.width, 0), height: num(cell.height, 0) },
     ...(anchorPoint ? { anchorPoint } : {}),
+    ...(lift ? { lift } : {}),
     ...(acknowledged ? { acknowledged } : {}),
     anchorDrift: { x: num(drift.x, 0), y: num(drift.y, 0) },
     // `=== undefined`, never a truthiness test: 0 is the *good* body drift and
     // must survive the trip.
     ...(bodyDrift === undefined ? {} : { bodyDrift }),
+    ...(headDrift === undefined ? {} : { headDrift }),
+    ...(sourceHeadDrift === undefined ? {} : { sourceHeadDrift }),
+    ...(nearDuplicates ? { nearDuplicates } : {}),
+    ...(rowJumps ? { rowJumps } : {}),
     maxJump: num(value.maxJump, 0),
     scaleDrift: num(value.scaleDrift, 0),
     emptyFrames: arr(value.emptyFrames).filter(
@@ -567,12 +885,44 @@ function parseInspect(value: unknown): InspectSummary | undefined {
     // result the pipeline can report.
     ...(seam === undefined ? {} : { seam }),
     ...(step === undefined ? {} : { step }),
+    ...(seamLimit === undefined ? {} : { seamLimit }),
     ...(seamFill === undefined ? {} : { seamFill }),
     ...(alphaCoverage === undefined ? {} : { alphaCoverage }),
+    ...(keyResidue === undefined ? {} : { keyResidue }),
     ...(startGap === undefined ? {} : { startGap }),
     ...(endGap === undefined ? {} : { endGap }),
     ...(crop ? { crop } : {}),
     ...(scale !== undefined && scale > 0 ? { scale } : {}),
+    ...(pixel ? { pixel } : {}),
+  };
+}
+
+/**
+ * A pixel run's lattice check, or undefined — never half of one. A malformed
+ * frame list, or entry in one, goes on its own; an emptied list is absent,
+ * as the pipeline writes one only when some frame broke the lattice that way.
+ */
+function parseLatticeCheck(value: unknown): PixelLatticeCheck | undefined {
+  if (!isRecord(value) || !isRecord(value.pitch)) return undefined;
+  const x = parseFinite(value.pitch.x);
+  const y = parseFinite(value.pitch.y);
+  const scale = value.scale;
+  if (x === undefined || x <= 0 || y === undefined || y <= 0) return undefined;
+  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 1) return undefined;
+  if (typeof value.held !== "boolean" || typeof value.paletteChecked !== "boolean") return undefined;
+  const frames = (list: unknown): number[] =>
+    Array.isArray(list) ? list.filter((i): i is number => typeof i === "number" && Number.isInteger(i) && i >= 0) : [];
+  const soft = frames(value.softAlphaFrames);
+  const offGrid = frames(value.offGridFrames);
+  const offPalette = frames(value.offPaletteFrames);
+  return {
+    pitch: { x, y },
+    scale,
+    held: value.held,
+    paletteChecked: value.paletteChecked,
+    ...(soft.length ? { softAlphaFrames: soft } : {}),
+    ...(offGrid.length ? { offGridFrames: offGrid } : {}),
+    ...(offPalette.length ? { offPaletteFrames: offPalette } : {}),
   };
 }
 
@@ -616,7 +966,9 @@ function parseExports(value: unknown): MotionExports | undefined {
 function parseCharacterExports(value: unknown): CharacterExports | undefined {
   if (!isRecord(value)) return undefined;
   const riv = optionalStr(value.riv);
-  return riv ? { riv } : undefined;
+  const aseprite = optionalStr(value.aseprite);
+  const exports: CharacterExports = { ...(riv ? { riv } : {}), ...(aseprite ? { aseprite } : {}) };
+  return Object.keys(exports).length > 0 ? exports : undefined;
 }
 
 const VIDEO_MODELS: readonly VideoModel[] = [
@@ -696,6 +1048,201 @@ function parseTransitionBrief(value: unknown): TransitionBrief | undefined {
   return { duration, budgetUsd, recordedAt };
 }
 
+// ── 0.5.0 sidecar additions ────────────────────────────────────────────────
+//
+// Every one of them is optional and absent in a 0.4.x file, so nothing below
+// may add a key to a record that did not carry one: an older project must
+// parse to exactly what it parsed to before. A value the loader does not
+// recognise is not a value — it is dropped, never defaulted.
+
+/** A member of one of this file's tuples, or undefined for anything else. */
+function member<T extends string>(tuple: readonly T[], value: unknown): T | undefined {
+  return typeof value === "string" && (tuple as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
+}
+
+/** A whole number above zero, or undefined. */
+function positiveInteger(value: unknown): number | undefined {
+  const n = parseFinite(value);
+  return n !== undefined && Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/** A non-blank sentence, or undefined. */
+function sentence(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+/**
+ * The pixel spec, or nothing. Its height is the answer every pixel run snaps
+ * to, so a spec without one is no spec; the palette and its size are each
+ * dropped on their own when malformed, the way a brief's budget is.
+ */
+function parsePixel(value: unknown): PixelSpec | undefined {
+  if (!isRecord(value)) return undefined;
+  const logicalHeight = positiveInteger(value.logicalHeight);
+  if (logicalHeight === undefined) return undefined;
+  const palette = optionalStr(value.palette);
+  const colors = positiveInteger(value.colors);
+  const variants = parsePixelVariants(value.variants);
+  return {
+    logicalHeight,
+    ...(palette ? { palette } : {}),
+    ...(colors === undefined ? {} : { colors }),
+    ...(variants ? { variants } : {}),
+  };
+}
+
+/** The colourways that pass `recolor.mjs`'s rules, first of a name kept; an
+ *  empty list is no list. */
+function parsePixelVariants(value: unknown): PixelVariant[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const variants: PixelVariant[] = [];
+  for (const raw of value) {
+    let variant: PixelVariant;
+    try {
+      variant = checkVariant(raw);
+    } catch (error) {
+      if (error instanceof RecolorError) continue;
+      throw error;
+    }
+    if (!variants.some((v) => v.name === variant.name)) variants.push(variant);
+  }
+  return variants.length ? variants : undefined;
+}
+
+/** A motion's colourway files: an entry needs a colourway name and its sheet
+ *  and atlas ids; the preview is optional. An empty record is no record. */
+function parseMotionVariants(value: unknown): Record<string, MotionVariantFiles> | undefined {
+  if (!isRecord(value)) return undefined;
+  const variants: Record<string, MotionVariantFiles> = {};
+  for (const [name, files] of Object.entries(value)) {
+    if (variantNameProblem(name) || !isRecord(files)) continue;
+    const sheet = optionalStr(files.sheet);
+    const atlas = optionalStr(files.atlas);
+    const gif = optionalStr(files.gif);
+    if (sheet && atlas) variants[name] = { sheet, atlas, ...(gif ? { gif } : {}) };
+  }
+  return Object.keys(variants).length ? variants : undefined;
+}
+
+/** The anatomy a breathe used, whole, or undefined. */
+function parseAnatomy(value: unknown): BreatheRecord["anatomy"] {
+  if (!isRecord(value)) return undefined;
+  const rigidRow = parseFinite(value.rigidRow);
+  const axisX = parseFinite(value.axisX);
+  const from = value.from === "detected" || value.from === "override" ? value.from : undefined;
+  if (rigidRow === undefined || axisX === undefined || !from) return undefined;
+  const torsoHalf = parseFinite(value.torsoHalf);
+  return { rigidRow, axisX, from, ...(torsoHalf !== undefined && torsoHalf >= 1 ? { torsoHalf } : {}) };
+}
+
+/**
+ * The breathe record, or nothing — never half of one, like the brief. A
+ * record missing its still cannot say what the frames were warped from, and
+ * one missing a parameter cannot be re-run with one of them changed, which
+ * is the whole of what it is kept for.
+ */
+function parseBreathe(value: unknown): BreatheRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  const still = optionalStr(value.still);
+  const depth = parseFinite(value.depth);
+  const breaths = positiveInteger(value.breaths);
+  const lag = parseFinite(value.lag);
+  const mode = value.mode === "smooth" || value.mode === "pixel" ? value.mode : undefined;
+  if (!still || depth === undefined || depth < 0 || breaths === undefined || lag === undefined || !mode) {
+    return undefined;
+  }
+  const anatomy = parseAnatomy(value.anatomy);
+  const headOffset = parseHeadOffset(value.headOffset);
+  return {
+    still,
+    depth,
+    breaths,
+    lag,
+    mode,
+    ...(anatomy ? { anatomy } : {}),
+    ...(headOffset ? { headOffset } : {}),
+  };
+}
+
+/** The head-offset extremes, whole, or undefined. */
+function parseHeadOffset(value: unknown): BreatheRecord["headOffset"] {
+  if (!isRecord(value)) return undefined;
+  const min = parseFinite(value.min);
+  const max = parseFinite(value.max);
+  const travel = parseFinite(value.travel);
+  const highest = frameIndices(value.highest);
+  const lowest = frameIndices(value.lowest);
+  if (min === undefined || max === undefined || travel === undefined || !highest || !lowest) return undefined;
+  return { min, max, travel, highest, lowest };
+}
+
+/** A list of frame indices, all of them, or undefined. */
+function frameIndices(value: unknown): number[] | undefined {
+  return Array.isArray(value) && value.every((i) => typeof i === "number" && Number.isInteger(i) && i >= 0)
+    ? (value as number[]).slice()
+    : undefined;
+}
+
+/**
+ * An auto slice's record, or nothing — never half of one. A malformed entry
+ * of `gridClipped` or `clipped` is dropped on its own; the lists' other
+ * entries still name their cells.
+ */
+function parseSlice(value: unknown): SliceRecord | undefined {
+  if (!isRecord(value) || value.mode !== "auto") return undefined;
+  const reason = member(SLICE_REASONS, value.reason);
+  const forced = value.forced;
+  if (!reason || !isRecord(forced) || typeof forced.rows !== "boolean") return undefined;
+  if (!Array.isArray(forced.cols) || !forced.cols.every((c) => typeof c === "boolean")) return undefined;
+  if (!Array.isArray(value.clipped)) return undefined;
+  const index = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0;
+  const gridClipped = Array.isArray(value.gridClipped) ? value.gridClipped.filter(index) : undefined;
+  const clipped: SliceRecord["clipped"] = [];
+  for (const c of value.clipped) {
+    if (!isRecord(c) || !index(c.index)) continue;
+    const why = member(CLIP_REASONS, c.why);
+    if (why) clipped.push({ index: c.index, why });
+  }
+  return {
+    mode: "auto",
+    reason,
+    ...(gridClipped ? { gridClipped } : {}),
+    forced: { rows: forced.rows, cols: forced.cols.slice() as boolean[] },
+    clipped,
+  };
+}
+
+/** A layout guide's geometry, whole, or undefined. */
+function parsePromptGuide(value: unknown): PromptGuide | undefined {
+  if (!isRecord(value) || !isRecord(value.cell) || !isRecord(value.safeMargin)) return undefined;
+  const rows = positiveInteger(value.rows);
+  const cols = positiveInteger(value.cols);
+  const width = positiveInteger(value.cell.width);
+  const height = positiveInteger(value.cell.height);
+  const x = parseFinite(value.safeMargin.x);
+  const y = parseFinite(value.safeMargin.y);
+  if (rows === undefined || cols === undefined || width === undefined || height === undefined) return undefined;
+  if (x === undefined || x < 0 || y === undefined || y < 0) return undefined;
+  return { rows, cols, cell: { width, height }, safeMargin: { x, y } };
+}
+
+/**
+ * The recorded prompt parts, or nothing. A builder version without its
+ * action, or guards that are not all clause ids, cannot rebuild the text they
+ * claim to describe; the guide is optional and dropped on its own.
+ */
+function parsePromptParts(value: unknown): PromptParts | undefined {
+  if (!isRecord(value)) return undefined;
+  const builder = sentence(value.builder);
+  const action = sentence(value.action);
+  if (!builder || !action || !Array.isArray(value.guards)) return undefined;
+  if (!value.guards.every((g): g is string => typeof g === "string")) return undefined;
+  const guide = parsePromptGuide(value.guide);
+  return { builder, action, guards: [...value.guards], ...(guide ? { guide } : {}) };
+}
+
 function parseMotion(value: unknown): Motion | null {
   if (!isRecord(value)) return null;
   const id = optionalStr(value.id);
@@ -719,10 +1266,30 @@ function parseMotion(value: unknown): Motion | null {
     : kind === "transition" ? parseTransitionBrief(value.brief) : undefined;
   const clip = kind === "loop" ? parseLoopClip(value.clip) : undefined;
   const reverseOf = kind === "transition" ? optionalStr(value.reverseOf) : undefined;
+  // Each source's own record travels only with that source, the way a brief
+  // travels only with a loop: a `mirrorOf` on a sheet motion or a breathe
+  // record on a video one describes frames this motion does not have.
+  const source = member(MOTION_SOURCES, value.source);
+  const mirrorOf = source === "mirror" ? optionalStr(value.mirrorOf) : undefined;
+  const breathe = source === "breathe" ? parseBreathe(value.breathe) : undefined;
+  // Only a sheet is sliced: a clip's samples, a warped still or a flip were not.
+  const slice = source === undefined || source === "sheet" ? parseSlice(value.slice) : undefined;
+  const direction = member(DIRECTIONS, value.direction);
+  // Prompt parts record how a SHEET prompt was built; a breathe or a mirror
+  // is drawn from no prompt (`register-run` drops them when one lands), so
+  // parts beside one describe frames this motion does not have.
+  const promptParts = source === "breathe" || source === "mirror"
+    ? undefined
+    : parsePromptParts(value.promptParts);
+  // Colourways are baked from a sprite motion's packed frames; a loop or a
+  // transition has none.
+  const variants = kind ? undefined : parseMotionVariants(value.variants);
   return {
     id,
     label: str(value.label, id),
     prompt: str(value.prompt),
+    ...(promptParts ? { promptParts } : {}),
+    ...(direction ? { direction } : {}),
     // An unrecognised kind is not a kind: the panel opens a different first
     // tab and the stage drops its pivot guide on the strength of this word,
     // so anything that is not "loop" reads as the sprite motion it was
@@ -737,7 +1304,10 @@ function parseMotion(value: unknown): Motion | null {
     anchor: value.anchor === "center" ? "center" : "bottom",
     status: parseMotionStatus(value.status),
     ...(optionalStr(value.notes) ? { notes: value.notes as string } : {}),
-    ...(value.source === "video" || value.source === "sheet" ? { source: value.source } : {}),
+    ...(source ? { source } : {}),
+    ...(mirrorOf ? { mirrorOf } : {}),
+    ...(breathe ? { breathe } : {}),
+    ...(slice ? { slice } : {}),
     ...(optionalStr(value.keyframe)
       ? { keyframe: value.keyframe as string }
       : {}),
@@ -756,6 +1326,7 @@ function parseMotion(value: unknown): Motion | null {
     ...(optionalStr(value.gif) ? { gif: value.gif as string } : {}),
     ...(optionalStr(value.webp) ? { webp: value.webp as string } : {}),
     ...(exports ? { exports } : {}),
+    ...(variants ? { variants } : {}),
     videos: arr(value.videos)
       .map((v): MotionVideo | null => {
         if (!isRecord(v)) return null;
@@ -797,6 +1368,9 @@ function parseSidecar(value: unknown): SpriteSidecar | null {
   const cell = isRecord(character.cell) ? character.cell : {};
   const facing = character.facing;
   const exports = parseCharacterExports(value.exports);
+  const purpose = member(CHARACTER_PURPOSES, character.purpose);
+  const pixel = parsePixel(character.pixel);
+  const asymmetric = sentence(character.asymmetric);
   return {
     version: 1,
     character: {
@@ -805,24 +1379,31 @@ function parseSidecar(value: unknown): SpriteSidecar | null {
       style: str(character.style),
       cell: { width: num(cell.width, 256), height: num(cell.height, 256) },
       ...(facing === "left" || facing === "right" ? { facing } : {}),
+      ...(purpose ? { purpose } : {}),
+      ...(pixel ? { pixel } : {}),
+      ...(asymmetric ? { asymmetric } : {}),
     },
     refs: arr(value.refs)
       .map((r): SpriteRef | null => {
         if (!isRecord(r)) return null;
         const id = optionalStr(r.id);
         if (!id) return null;
-        const role = r.role;
+        // An anchor IS its direction — one pose, facing one way — so one
+        // without a usable direction is just a picture: it loads as custom,
+        // and no other role carries a direction at all.
+        const direction = member(DIRECTIONS, r.direction);
+        const named = member(
+          ["turnaround", "portrait", "expression", "custom"] as const,
+          r.role,
+        );
+        const role: SpriteRefRole =
+          r.role === "anchor" && direction ? "anchor" : named ?? "custom";
         return {
           id,
           asset: str(r.asset, `ref-${id}`),
-          role:
-            role === "turnaround" ||
-            role === "portrait" ||
-            role === "expression" ||
-            role === "custom"
-              ? role
-              : "custom",
+          role,
           label: str(r.label, id),
+          ...(role === "anchor" ? { direction } : {}),
         };
       })
       .filter((r): r is SpriteRef => r !== null),

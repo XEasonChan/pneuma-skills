@@ -23,9 +23,9 @@
 
 import type { CharacterProject, Motion, MotionStatus } from "../domain.js";
 import { resolveAssetUri } from "../domain.js";
-import { BridgeIcon, FilmIcon, LoopIcon, WarnIcon } from "./icons.js";
+import { BreathIcon, BridgeIcon, FilmIcon, LoopIcon, WarnIcon } from "./icons.js";
 import { hasGeneratingVideo, joinVerdict } from "./metrics.js";
-import { motionLabel, railGroups } from "./panel.js";
+import { labelNamesDirection, motionLabel, railGroups } from "./panel.js";
 import type { SpriteStrings } from "./strings.js";
 import { contentUrl } from "./urls.js";
 
@@ -107,7 +107,12 @@ export function MotionRail({
                   <button
                     type="button"
                     onClick={() => onSelectRef(ref.id)}
-                    title={t.referenceTitle(ref.label, t.refRole[ref.role])}
+                    title={t.referenceTitle(
+                      ref.label,
+                      ref.direction
+                        ? `${t.refRole[ref.role]} · ${t.direction[ref.direction]}`
+                        : t.refRole[ref.role],
+                    )}
                     className={`group flex w-full flex-col gap-1 rounded-lg border p-1 text-left transition-colors focus-visible:ring-2 focus-visible:ring-cc-primary/60 ${
                       active
                         ? "border-cc-primary/60 bg-cc-primary/10"
@@ -152,7 +157,7 @@ export function MotionRail({
         </h2>
         {motions.length === 0 ? (
           <p className="px-1 text-xs leading-relaxed text-cc-muted">
-            {t.noMotions}
+            {t.noMotions(project.sprite.character.purpose ?? null)}
           </p>
         ) : (
           <ul className="flex flex-col gap-1">
@@ -259,6 +264,17 @@ function MotionRow({
               <FilmIcon size={9} />
               {t.videoSource}
             </span>
+          ) : motion.source === "breathe" ? (
+            // Warped out of one picture for free: the chip says so, and its
+            // title says which way the pixels moved — the one setting that
+            // is wrong for the other kind of art.
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-cc-border px-1.5 py-px text-[10px] text-cc-muted"
+              title={t.breatheSourceTitle(motion.breathe?.mode ?? null)}
+            >
+              <BreathIcon size={9} />
+              {t.breatheSource}
+            </span>
           ) : null}
           {warnings.length > 0 ? (
             <span
@@ -287,6 +303,21 @@ function MotionRow({
             </span>
           ) : null}
           <span className="min-w-0 truncate">
+          {/* The way it faces, first on the line — `walk-left` and
+              `walk-right` are one state twice, and the label the agent wrote
+              may not say which. When it does ("Attack · right"), once is
+              enough. */}
+          {motion.direction && !labelNamesDirection(label, motion.direction, t.direction[motion.direction]) ? (
+            <>
+              <span
+                className="text-cc-fg/80"
+                title={t.directionTitle[motion.direction]}
+              >
+                {t.direction[motion.direction]}
+              </span>
+              {" · "}
+            </>
+          ) : null}
           {/* A loop's grid is the 1×1 `register-run` writes because the
               sidecar has the field, not because anything is 1×1 — printing
               it puts a number nobody can act on in front of the two that

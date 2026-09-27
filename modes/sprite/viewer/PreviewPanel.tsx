@@ -59,12 +59,12 @@ import {
 import {
   defaultTab,
   EXPORT_SWATCHES,
+  exportFamilyOrder,
   exportRows,
   loopExports,
   motionLabel,
   normalizeExportColor,
   panelTabs,
-  type ExportFamily,
   type ExportRow,
   type ExportRowOptions,
   type PanelTab,
@@ -547,10 +547,9 @@ function AtlasTab({
   );
 }
 
-const EXPORT_FAMILIES: ExportFamily[] = ["video", "frames", "rive"];
-
 /**
- * Every format this motion can be delivered as, in three sections.
+ * Every format this motion can be delivered as, in three sections, in the
+ * order the character's route reads them (`exportFamilyOrder`).
  *
  * The rows are `exportRows` verbatim — this component decides nothing about
  * which formats exist, only how a row looks. A row is a download when its
@@ -588,7 +587,7 @@ function ExportTab({
 
   return (
     <div className="flex flex-col gap-4 p-3">
-      {EXPORT_FAMILIES.map((family) => {
+      {exportFamilyOrder(project.sprite.character.purpose).map((family) => {
         const inFamily = rows.filter((row) => row.family === family);
         if (inFamily.length === 0) return null;
         return (
@@ -648,7 +647,7 @@ function ExportRowView({
   const offered = state.kind !== "not-offered";
   const riv = row.format === "riv";
   const takesColor = row.format === "mp4" && row.canGenerate;
-  const motions = row.rive?.motions.length ?? 0;
+  const motions = row.rive?.motions.length ?? row.sheet?.motions.length ?? 0;
   const transitions = row.rive?.transitions.length ?? 0;
   const request = () => onRequest?.(row, row.format === "mp4" ? background : null);
   const rivFile = riv && state.kind === "ready" ? state.files[0] : null;
@@ -662,9 +661,10 @@ function ExportRowView({
       <div className="flex items-baseline gap-2">
         <span
           className={`text-[12px] ${offered ? "text-cc-fg" : "text-cc-muted"}`}
-          title={row.builtIn ? t.exportBuiltInTitle : undefined}
+          title={row.builtIn && !row.variant ? t.exportBuiltInTitle : undefined}
         >
           {t.exportFormatName[row.format]}
+          {row.variant ? <span className="font-mono text-cc-muted"> · {row.variant}</span> : null}
         </span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-cc-muted" title={t.exportPurpose(row.format, { motions, transitions })}>
           {t.exportPurpose(row.format, { motions, transitions })}
@@ -681,6 +681,15 @@ function ExportRowView({
         <p className="font-mono text-[10px] text-cc-muted">
           {t.exportRepeat(row.video, motion.loop)}
           {row.background ? ` · ${t.exportOnBackground(row.background)}` : null}
+          {row.shadow ? ` · ${t.exportWithShadow}` : null}
+        </p>
+      ) : offered && row.shadow ? (
+        <p className="font-mono text-[10px] text-cc-muted">{t.exportWithShadow}</p>
+      ) : null}
+
+      {ready && row.sheet && row.sheet.missing.length > 0 ? (
+        <p className="rounded border border-cc-warning/40 bg-cc-warning/10 px-2 py-1 text-[11px] leading-relaxed text-cc-fg">
+          {t.exportRiveMissing(row.sheet.missing)}
         </p>
       ) : null}
 
@@ -963,9 +972,10 @@ function InspectBlock({ motion, t }: { motion: Motion; t: SpriteStrings }) {
  * Not one anchor row among them, and that is the point: a loop is never stood
  * on a floor, so `anchorDrift` / `maxJump` / `scaleDrift` describe nothing —
  * printing them would be five numbers nobody can act on next to the two that
- * decide whether the workflow succeeded. The seam carries its own bar (twice
- * the median step, the pipeline's own rule) so a user can argue with the
- * verdict instead of taking it.
+ * decide whether the workflow succeeded. The seam carries its own bar (the
+ * one `loop` recorded — twice the median step, or its noise floor — or twice
+ * the step on an older report) so a user can argue with the verdict instead
+ * of taking it.
  */
 function LoopFacts({ motion, t }: { motion: Motion; t: SpriteStrings }) {
   const inspect = motion.inspect!;

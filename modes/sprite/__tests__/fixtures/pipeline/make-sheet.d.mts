@@ -118,7 +118,56 @@ export interface BuildExprClipOptions {
 }
 
 export declare function buildExprClip(outPath: string, options?: BuildExprClipOptions): string;
+
+export interface BuildWalkerClipOptions {
+  width?: number;
+  height?: number;
+  fps?: number;
+  seconds?: number;
+  /** Seconds per gait cycle (two steps). */
+  period?: number;
+  /** Peak-to-peak travel of a foot under the hip, px. */
+  stride?: number;
+  /** How far a swinging foot is lifted clear of the ground line, px. */
+  lift?: number;
+  /** Body travel across the canvas, px per second (0: walks in place). */
+  drift?: number;
+  /** The torso's centre x at the clip's midpoint. */
+  centre?: number;
+  background?: string;
+}
+
+/** A side-view biped walking in place: head + torso ride
+ *  `centre + drift·(t − seconds/2)`, two legs take turns being lifted. */
+export declare function buildWalkerClip(outPath: string, options?: BuildWalkerClipOptions): string;
 export declare function clipFrameDeltas(path: string, width?: number): number[];
+
+/** One box of a layered clip; `x` / `y` are ffmpeg expressions in `t` and `n`. */
+export interface ClipLayer {
+  w: number;
+  h: number;
+  /** Any ffmpeg colour expression. */
+  color: string;
+  x?: string | number;
+  y?: string | number;
+}
+
+export interface BuildLayerClipOptions {
+  width?: number;
+  height?: number;
+  fps?: number;
+  /** Frames to emit; the duration is frames / fps. */
+  frames?: number;
+  background?: string;
+  /** Stacked in order, the first at the bottom. */
+  layers?: ClipLayer[];
+  encode?: "h264" | "prores4444";
+}
+
+export declare function buildLayerClip(outPath: string, options?: BuildLayerClipOptions): string;
+
+/** Every frame of a clip as RGBA bytes at the clip's own size. */
+export declare function clipFramesRgba(path: string): { width: number; height: number; frames: Uint8Array[] };
 
 export interface BuildNoiseClipOptions {
   width?: number;

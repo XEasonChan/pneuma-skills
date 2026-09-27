@@ -20,7 +20,7 @@
  * disagrees with the script's own warning would be worse than none.
  */
 
-import type { CharacterProject, InspectSummary, Motion } from "../domain.js";
+import type { CharacterProject, Direction, InspectSummary, Motion } from "../domain.js";
 import type { AtlasGeometry } from "./atlas.js";
 
 /** The inspect step's thresholds, verbatim from `sprite-sheet.mjs`. */
@@ -57,8 +57,15 @@ export function measuredCellText(cell: {
 }
 
 export interface SizeLine {
-  /** `character.cell` — the target the agent declared. */
+  /**
+   * `character.cell` — the target the agent declared. Null where the route
+   * has no cell to be held to: a picture brought to life and a UI loop are
+   * cropped to their own content, and a pixel-art character's target is its
+   * height in logical pixels (`logicalHeight`), not a cell.
+   */
   declared: string | null;
+  /** `character.pixel.logicalHeight` — a pixel-art character's declared height. */
+  logicalHeight: number | null;
   /** `inspect.cell` — what the frames on disk measure. */
   measured: string | null;
   /** `pack --scale`, when it was not 1 (and when it is knowable). */
@@ -79,16 +86,40 @@ export function sizeLine(
   motion: Motion | null,
   geometry: AtlasGeometry | null,
 ): SizeLine {
-  const declaredCell = project?.sprite.character.cell;
+  const character = project?.sprite.character;
+  const height = character?.pixel?.logicalHeight;
+  const logicalHeight = typeof height === "number" && height > 0 ? height : null;
+  // "declared 256" beside a picture that was uploaded and made to breathe
+  // compared the upload against a number nobody chose (route A, 2026-09-27).
+  const holdsCell = character?.purpose !== "animate" && character?.purpose !== "loop";
+  const declaredCell = holdsCell && logicalHeight === null ? character?.cell : undefined;
   const declared = declaredCell ? cellText(declaredCell) || null : null;
   const inspect = motion?.inspect;
   const measured = inspect ? measuredCellText(inspect.cell) || null : null;
   const scale = geometry && geometry.trusted ? geometry.scale : null;
   return {
     declared,
+    logicalHeight,
     measured,
     packedScale: scale !== null && scale !== 1 ? scale : null,
   };
+}
+
+/**
+ * The facing the header names: the motion's own direction when it has one
+ * (a four-direction character's front walk is not "facing right"), else the
+ * side the character is set to face — except on the routes that have no
+ * side: a picture brought to life faces the way it was drawn, and a UI loop
+ * faces nothing. Null says nothing.
+ */
+export function stageFacing(
+  project: CharacterProject | null,
+  motion: Motion | null,
+): Direction | null {
+  if (motion?.direction) return motion.direction;
+  const character = project?.sprite.character;
+  if (!character || character.purpose === "animate" || character.purpose === "loop") return null;
+  return character.facing ?? null;
 }
 
 // ── Thresholds ─────────────────────────────────────────────────────────────
@@ -109,14 +140,32 @@ export function scaleDriftVerdict(inspect: InspectSummary): MetricVerdict {
   return verdict(inspect.scaleDrift, THRESHOLDS.scaleDrift);
 }
 
+/**
+ * The opening words of the two `inspect` warnings whose rule has a second
+ * condition the summary does not carry: a jump is a warning only when the
+ * FEET jump too (a swinging prop moves the silhouette by design), and body
+ * drift only when the head goes with it and the alignment did not keep the
+ * foot line on purpose (`--x-from trend|body`). Over the bar alone is not
+ * the script's verdict — the viewer painted a 27.5 px jump amber beside an
+ * empty warning list (four-direction trial, 2026-09-27) — so for these two
+ * the verdict defers to the report the run wrote.
+ */
+export const JUMP_WARNING = "anchor jumps between frames";
+export const BODY_DRIFT_WARNING = "body drifts sideways between frames";
+
+const reported = (inspect: InspectSummary, opening: string): boolean =>
+  inspect.warnings.some((warning) => warning.startsWith(opening));
+
 /** The jump bar is a fraction of the cell WIDTH, so an unmeasured cell has no
- *  bar at all — a fixed px limit would be a different claim on every sheet. */
+ *  bar at all — a fixed px limit would be a different claim on every sheet.
+ *  Over it counts only when the run warned (see `JUMP_WARNING`). */
 export function maxJumpVerdict(inspect: InspectSummary): MetricVerdict {
   const cell = inspect.cell.width;
-  return verdict(
+  const judged = verdict(
     inspect.maxJump,
     cell > 0 ? round2(THRESHOLDS.maxJumpFraction * cell) : null,
   );
+  return { ...judged, over: judged.over && reported(inspect, JUMP_WARNING) };
 }
 
 /**
@@ -134,10 +183,11 @@ export function bodyDriftOf(inspect: InspectSummary): number | null {
 export function bodyDriftVerdict(inspect: InspectSummary): MetricVerdict {
   const cell = inspect.cell.width;
   const value = bodyDriftOf(inspect) ?? 0;
-  return verdict(
+  const judged = verdict(
     value,
     cell > 0 ? round2(THRESHOLDS.bodyDriftFraction * cell) : null,
   );
+  return { ...judged, over: judged.over && reported(inspect, BODY_DRIFT_WARNING) };
 }
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
@@ -183,19 +233,23 @@ export function seamFillOf(inspect: InspectSummary): number | null {
 /**
  * Does the loop close?
  *
- * The bar is the pipeline's own: a seam worth more than TWICE the median
- * frame-to-frame step reads as a jump when the animation wraps, and `loop`
- * warns about exactly that. The bar therefore moves with the motion — a slow
- * sway forgives less than a flicker — which is why it is computed from the
- * step rather than fixed. No step, no bar: a single-frame or unmeasured loop
- * is not judged, it is simply not judged YET.
+ * The bar is the pipeline's own, and the pipeline records it: `seamLimit` is
+ * what the run that measured the seam judged it against — twice the median
+ * frame-to-frame step, or a noise floor when that is larger, because a
+ * near-still loop moves so little per frame that re-render noise at the wrap
+ * reads as several steps. Reading the recorded bar keeps this verdict and
+ * `loop`'s warning one decision rather than two copies of a rule. A report
+ * from before the bar was recorded is judged by the rule that run used,
+ * TWICE the step. No step and no recorded bar, no verdict: a single-frame or
+ * unmeasured loop is not judged, it is simply not judged YET.
  */
 export const SEAM_STEP_FACTOR = 2;
 
 export function seamVerdict(inspect: InspectSummary): MetricVerdict {
   const seam = seamOf(inspect);
   const step = stepOf(inspect);
-  const limit = step === null ? null : round4(SEAM_STEP_FACTOR * step);
+  const recorded = finite(inspect.seamLimit);
+  const limit = recorded ?? (step === null ? null : round4(SEAM_STEP_FACTOR * step));
   return { limit, over: limit !== null && seam !== null && seam > limit };
 }
 

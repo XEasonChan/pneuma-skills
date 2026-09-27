@@ -41,12 +41,31 @@ export const RIVE_DEFAULT_IMAGES = "webp";
 export const RIVE_PIXEL_ART_STYLE = /pixel[\s-]*art|pixel[\s-]*(?:style|sprite|character)s?|\b(?:8|16|32)[\s-]?bit\b|像素/i;
 
 /**
+ * Whether a character is pixel art. `character.pixel` (0.5.0) is the one
+ * authority: a character that carries it is pixel art whatever its style
+ * sentence says. A character without it — every 0.4.x character — is read
+ * off `style` with `RIVE_PIXEL_ART_STYLE`, as before.
+ *
+ * Takes the sidecar's `character`, or a bare style string (the older
+ * callers, which only ever had the style to hand).
+ */
+export function riveIsPixelArt(character) {
+  if (character && typeof character === "object") {
+    const pixel = character.pixel;
+    if (pixel && typeof pixel === "object" && Number(pixel.logicalHeight) > 0) return true;
+    return RIVE_PIXEL_ART_STYLE.test(String(character.style ?? ""));
+  }
+  return RIVE_PIXEL_ART_STYLE.test(String(character ?? ""));
+}
+
+/**
  * The image format a `.riv` embeds when `--images` is not given: lossless
  * WebP (`webp-lossless`: ARGB, no chroma subsampling — every visible pixel
- * exactly as drawn) for pixel art, lossy WebP for everything else.
+ * exactly as drawn) for pixel art, lossy WebP for everything else. Takes
+ * what `riveIsPixelArt` takes.
  */
-export function riveDefaultImages(style) {
-  return RIVE_PIXEL_ART_STYLE.test(String(style ?? "")) ? "webp-lossless" : RIVE_DEFAULT_IMAGES;
+export function riveDefaultImages(character) {
+  return riveIsPixelArt(character) ? "webp-lossless" : RIVE_DEFAULT_IMAGES;
 }
 
 /** A loop's longest edge in a `.riv` unless `--max-size` says otherwise. */
@@ -131,10 +150,11 @@ export function riveScaleFactor(sizes, maxSize) {
  * The plan for a set of motions.
  *
  * `motions`: `[{ id, kind: "sprite" | "loop" | "transition", loop, fps, frames,
- * width, height, clipScale?, reverseOf? }]` — the frame count, rate and frame
- * size as registered; for a loop or a transition whose scale against its clip
- * is known, that scale (see `riveScaleFactor`); for a transition that plays
- * another backwards, the one it plays.
+ * width, height, clipScale?, reverseOf?, mirrorOf? }]` — the frame count, rate
+ * and frame size as registered; for a loop or a transition whose scale
+ * against its clip is known, that scale (see `riveScaleFactor`); for a
+ * transition that plays another backwards, the one it plays; for a sprite
+ * motion that is another flipped, the one it flips.
  * `options.fps` / `options.maxSize`: the caller's `--fps` / `--max-size`, or
  * null. Loops and transitions fall back to 24 fps and 320 px; a sprite
  * motion keeps its own rate and size unless the caller named one.
@@ -151,7 +171,11 @@ export function riveScaleFactor(sizes, maxSize) {
  * A reverse whose source is in the same file SHARES the source's images —
  * its frames are the source's kept frames in reverse order, `shares` names
  * the source, and it adds nothing to `decodeBytes`: every runtime decodes an
- * embedded image once, however many timelines show it.
+ * embedded image once, however many timelines show it. A mirror whose source
+ * is in the file shares them the same way, in the same order and flipped
+ * (`mirrored: true`) — provided it is the source's frames as they are: the
+ * same count, size, rate and loop. `sharedFrames[r]` is the source's kept
+ * frame a sharing motion's frame r shows.
  */
 export function rivePlan(motions, { fps = null, maxSize = null } = {}) {
   const settings = {
@@ -190,22 +214,41 @@ export function rivePlan(motions, { fps = null, maxSize = null } = {}) {
     };
   };
   const byId = new Map(motions.map((m) => [m.id, m]));
+  /** The motion whose embedded images `motion` shows, and whether flipped. */
   const sharesWith = (motion) => {
-    const source = motion.kind === "transition" && motion.reverseOf ? byId.get(motion.reverseOf) : undefined;
-    return source && source.kind === "transition" && !source.reverseOf && source.frames === motion.frames ? source : undefined;
+    if (motion.kind === "transition" && motion.reverseOf) {
+      const source = byId.get(motion.reverseOf);
+      return source && source.kind === "transition" && !source.reverseOf && source.frames === motion.frames
+        ? { source, flip: false }
+        : undefined;
+    }
+    if (kindOf(motion) === "sprite" && motion.mirrorOf) {
+      const source = byId.get(motion.mirrorOf);
+      return source && kindOf(source) === "sprite" && !source.mirrorOf && source.frames === motion.frames
+        && source.width === motion.width && source.height === motion.height
+        && source.fps === motion.fps && !!source.loop === !!motion.loop
+        ? { source, flip: true }
+        : undefined;
+    }
+    return undefined;
   };
   const first = new Map(motions.filter((m) => !sharesWith(m)).map((m) => [m.id, own(m)]));
   const planned = motions.map((motion) => {
-    const source = sharesWith(motion);
-    if (!source) return first.get(motion.id);
+    const sharing = sharesWith(motion);
+    if (!sharing) return first.get(motion.id);
+    const { source, flip } = sharing;
     const shared = first.get(source.id);
+    const kept = shared.indices.length;
     return {
       ...shared,
       id: motion.id,
       shares: source.id,
+      ...(flip ? { mirrored: true } : {}),
       source: { frames: motion.frames, fps: motion.fps, width: motion.width, height: motion.height },
-      // Frame r of the reverse IS frame (count − 1 − r) of the source.
-      indices: shared.indices.map((i) => motion.frames - 1 - i).reverse(),
+      // Frame i of a mirror IS frame i of its source, flipped; frame r of a
+      // reverse IS frame (count − 1 − r) of the source.
+      indices: flip ? shared.indices : shared.indices.map((i) => motion.frames - 1 - i).reverse(),
+      sharedFrames: Array.from({ length: kept }, (_, k) => (flip ? k : kept - 1 - k)),
       clipScale: motion.clipScale > 0 ? motion.clipScale : shared.clipScale,
       decodeBytes: 0,
     };
@@ -230,16 +273,34 @@ export function rivePlan(motions, { fps = null, maxSize = null } = {}) {
  * `reverse` and `source` are `{ frames: assetId[] }`; `edgeOf(assetId)` is the
  * frame's provenance edge; `createdAt(assetId)` its asset's registration time.
  */
-export function riveReverseIsCurrent(reverse, source, { edgeOf, createdAt }) {
+export function riveReverseIsCurrent(reverse, source, lookup) {
   const n = source.frames.length;
-  if (!n || reverse.frames.length !== n) return false;
-  return reverse.frames.every((id, r) => {
+  return derivedFromCurrent(reverse, source, "reverse", (r) => n - 1 - r, lookup);
+}
+
+/**
+ * Whether a registered mirror still shows its source flipped, so the `.riv`
+ * can draw it from the source's images: frame i derived (`step: "mirror"`)
+ * from the source's frame i, after that frame was registered. The same rule
+ * `sprite-project.mjs show` reads stale mirrors by (`mirrorStaleness`); the
+ * scripts are standalone files, so each states it.
+ */
+export function riveMirrorIsCurrent(mirror, source, lookup) {
+  return derivedFromCurrent(mirror, source, "mirror", (i) => i, lookup);
+}
+
+/** Every frame of `derived` came, by `step`, from the source frame
+ *  `sourceIndex(i)` as it is registered now. */
+function derivedFromCurrent(derived, source, step, sourceIndex, { edgeOf, createdAt }) {
+  const n = source.frames.length;
+  if (!n || derived.frames.length !== n) return false;
+  return derived.frames.every((id, i) => {
     const edge = edgeOf(id);
-    const from = source.frames[n - 1 - r];
+    const from = source.frames[sourceIndex(i)];
     const made = Number(edge?.operation?.timestamp);
     const shot = Number(createdAt(from));
     return edge?.fromAssetId === from
-      && edge.operation?.params?.step === "reverse"
+      && edge.operation?.params?.step === step
       && Number.isFinite(made) && Number.isFinite(shot) && shot <= made;
   });
 }

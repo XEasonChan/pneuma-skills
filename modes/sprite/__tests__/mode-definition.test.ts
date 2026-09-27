@@ -206,6 +206,158 @@ describe("extractContext — no selection", () => {
   });
 });
 
+/**
+ * The 0.5.0 fields a later turn needs without another tool call: what the
+ * user is making (so the agent does not ask again), which way a motion and
+ * an anchor face, and where a breathe's or a mirror's frames came from.
+ */
+describe("extractContext — routes, directions, breathe and mirror", () => {
+  function routed(): ViewerFileContent[] {
+    const body = JSON.parse(withWalk());
+    body.sprite.character.purpose = "game";
+    body.sprite.refs.push({ id: "anchor-left", asset: "ref-anchor-left", role: "anchor", label: "Anchor left", direction: "left" });
+    body.sprite.motions.push(
+      {
+        id: "idle", label: "Idle", prompt: "", grid: { rows: 4, cols: 4 }, fps: 8, loop: true, anchor: "bottom",
+        status: "ready", source: "breathe", frames: [], videos: [],
+        breathe: { still: "ref-portrait-alpha", depth: 0.02, breaths: 1, lag: 0.15, mode: "smooth" },
+      },
+      {
+        id: "walk-left", label: "Walk · left", prompt: "", grid: { rows: 2, cols: 4 }, fps: 10, loop: true, anchor: "bottom",
+        status: "ready", source: "mirror", mirrorOf: "walk", direction: "left", frames: [], videos: [],
+      },
+    );
+    return files({ "mini/project.json": JSON.stringify(body) });
+  }
+  const at = (address: Record<string, unknown>) => extractSpriteContext({ address } as never, routed());
+
+  test("the overview says what the user is making, and which way each anchor faces", () => {
+    const context = extractSpriteContext(null, routed());
+    expect(context).toContain("Purpose: game");
+    expect(context).toContain("anchor-left (anchor, left)");
+  });
+
+  test("a breathe names the still it was warped from; a mirror names its source and its side", () => {
+    expect(at({ contentSet: "mini", motion: "idle" })).toContain("Source: breathe (from ref-portrait-alpha) · depth 0.02, 1 breath, smooth");
+    const mirror = at({ contentSet: "mini", motion: "walk-left" });
+    expect(mirror).toContain("Direction: left");
+    expect(mirror).toContain("Source: mirror of walk (its frames flipped left↔right)");
+  });
+
+  test("a breathe's context carries what a re-run starts from: the boundary it used, and a manual torso", () => {
+    const body = JSON.parse(withWalk());
+    body.sprite.motions.push({
+      id: "idle", label: "Idle", prompt: "", grid: { rows: 3, cols: 4 }, fps: 8, loop: true, anchor: "bottom",
+      status: "ready", source: "breathe", frames: [], videos: [],
+      breathe: {
+        still: "ref-still", depth: 0.03, breaths: 2, lag: 0.1, mode: "pixel",
+        anatomy: { rigidRow: 96, axisX: 67, from: "override", torsoHalf: 30 },
+      },
+    });
+    const context = extractSpriteContext({ address: { contentSet: "mini", motion: "idle" } } as never, files({ "mini/project.json": JSON.stringify(body) }));
+    expect(context).toContain("Source: breathe (from ref-still) · depth 0.03, 2 breaths, pixel, rigid row 96, axis 67, torso 30 (override)");
+  });
+
+  test("a breathe's context says how far the head travels, and in which frames it rides highest and lowest", () => {
+    const body = JSON.parse(withWalk());
+    body.sprite.motions.push({
+      id: "idle", label: "Idle", prompt: "", grid: { rows: 3, cols: 4 }, fps: 8, loop: true, anchor: "bottom",
+      status: "ready", source: "breathe", frames: [], videos: [],
+      breathe: {
+        still: "ref-still", depth: 0.03, breaths: 2, lag: 0.1, mode: "pixel",
+        headOffset: { min: -3, max: 0, travel: 3, highest: [4], lowest: [0, 8] },
+      },
+    });
+    const context = extractSpriteContext({ address: { contentSet: "mini", motion: "idle" } } as never, files({ "mini/project.json": JSON.stringify(body) }));
+    expect(context).toContain("Head offset: -3..0px (travel 3px: highest in frame 4, lowest in 0, 8)");
+    expect(at({ contentSet: "mini", motion: "idle" })).not.toContain("Head offset");
+  });
+
+  test("a sheet motion's context carries a jump's lift and an auto slice's findings", () => {
+    const body = JSON.parse(withWalk());
+    Object.assign(body.sprite.motions[0], {
+      slice: {
+        mode: "auto", reason: "grid-clipped", gridClipped: [1, 2],
+        forced: { rows: true, cols: [false, true] }, clipped: [{ index: 3, why: "cut" }, { index: 0, why: "sheet-edge" }],
+      },
+    });
+    body.sprite.motions[0].inspect.lift = [0, 12.5, null, 3];
+    const motionId = body.sprite.motions[0].id;
+    const context = extractSpriteContext({ address: { contentSet: "mini", motion: motionId } } as never, files({ "mini/project.json": JSON.stringify(body) }));
+    expect(context).toContain("Lift above the ground (y from cell): 0, 12.5, -, 3 px");
+    expect(context).toContain(
+      "Slice: by the poses' ink — the fixed grid cut through cells 01, 02; rows forced (cut at the thinnest lines); row 1 forced (cut at its thinnest columns); clipped anyway: 03 (cut apart from a pose it touched), 00 (drawn off the sheet)",
+    );
+    const plain = extractSpriteContext({ address: { contentSet: "mini", motion: motionId } } as never, files({ "mini/project.json": withWalk() }));
+    expect(plain).not.toContain("Lift above");
+    expect(plain).not.toContain("Slice:");
+  });
+
+  test("a pixel motion's context says whether its frames still sit on the lattice, and which left it", () => {
+    const withPixel = (pixel: unknown) => {
+      const body = JSON.parse(withWalk());
+      body.sprite.motions[0].inspect.pixel = pixel;
+      const motionId = body.sprite.motions[0].id;
+      return extractSpriteContext({ address: { contentSet: "mini", motion: motionId } } as never, files({ "mini/project.json": JSON.stringify(body) }));
+    };
+    expect(withPixel({
+      pitch: { x: 8.0625, y: 8 }, scale: 2, held: false, paletteChecked: true,
+      softAlphaFrames: [1, 3], offGridFrames: [2], offPaletteFrames: [0],
+    })).toContain(
+      "Pixel lattice: broken — soft alpha in frames 01, 03; blocks off the 2x grid in frame 02; colours outside the palette in frame 00 · pitch 8.06×8, scale 2x · palette checked\n",
+    );
+    expect(withPixel({ pitch: { x: 8, y: 8 }, scale: 1, held: true, paletteChecked: false }))
+      .toContain("Pixel lattice: held · pitch 8×8, scale 1x · palette not checked\n");
+    expect(withPixel(undefined)).not.toContain("Pixel lattice");
+  });
+
+  test("an anchor reference says which way it faces", () => {
+    expect(at({ contentSet: "mini", ref: "anchor-left" })).toContain('Reference: "Anchor left" (anchor-left, role anchor, faces left)');
+  });
+
+  test("a character with no recorded route prints no Purpose line", () => {
+    expect(extractSpriteContext(null, files({ "mini/project.json": withWalk() }))).not.toContain("Purpose:");
+  });
+
+  test("the overview carries the asymmetry sentence: why a side is drawn, and what every directional prompt keeps", () => {
+    const body = JSON.parse(withWalk());
+    body.sprite.character.asymmetric = "The basket hangs on her right arm.";
+    const context = extractSpriteContext(null, files({ "mini/project.json": JSON.stringify(body) }));
+    expect(context).toContain("Asymmetric (never mirrored): The basket hangs on her right arm.");
+    expect(extractSpriteContext(null, files({ "mini/project.json": withWalk() }))).not.toContain("Asymmetric");
+  });
+});
+
+describe("extractContext — pixel art and its colourways", () => {
+  function pixel(edit?: (body: any) => void): ViewerFileContent[] {
+    const body = JSON.parse(withWalk());
+    body.sprite.character.pixel = {
+      logicalHeight: 53, palette: "mini-palette", colors: 48,
+      variants: [{ name: "red-team", map: { "#1954bf": "#bf191f" } }, { name: "blue-team", map: { "#dc2224": "#2263dc" } }],
+    };
+    body.sprite.motions[0].variants = { "red-team": { sheet: "a", atlas: "b", gif: "c" } };
+    edit?.(body);
+    return files({ "mini/project.json": JSON.stringify(body) });
+  }
+
+  test("the overview says pixel art, its height, its palette and its colourways in one line", () => {
+    const context = extractSpriteContext(null, pixel());
+    expect(context).toContain("Pixel art: 53 logical px tall · palette pinned · colourways: red-team, blue-team");
+    expect(extractSpriteContext(null, pixel((b) => {
+      b.sprite.character.pixel = { logicalHeight: 32 };
+    }))).toContain("Pixel art: 32 logical px tall · palette not pinned yet\n");
+    expect(extractSpriteContext(null, files({ "mini/project.json": withWalk() }))).not.toContain("Pixel art:");
+  });
+
+  test("a motion names the colourways it was baked in", () => {
+    const motionId = JSON.parse(withWalk()).sprite.motions[0].id;
+    expect(extractSpriteContext({ address: { contentSet: "mini", motion: motionId } } as never, pixel())).toContain("Colourways: red-team");
+    expect(extractSpriteContext({ address: { contentSet: "mini", motion: motionId } } as never, pixel((b) => {
+      delete b.sprite.motions[0].variants;
+    }))).not.toContain("Colourways:");
+  });
+});
+
 describe("selectCharacter", () => {
   const roster = {
     byContentSet: {
@@ -341,17 +493,47 @@ describe("the definition and the manifest agree", () => {
     }
   });
 
-  test("0.4.0 is the export release, and says so in the user's words", () => {
-    expect(spriteManifest.version).toBe("0.4.0");
-    const notes = spriteManifest.changelog?.["0.4.0"] ?? [];
-    expect(notes.length).toBeGreaterThan(0);
-    for (const note of notes) {
-      // The manifest style: plain sentences, no markdown, no trailing period.
-      expect(note).not.toMatch(/`|\*\*|^- /);
-      expect(note.endsWith(".")).toBe(false);
+  test("0.5.0 is the routes release, and says so in the user's words", () => {
+    expect(spriteManifest.version).toBe("0.5.0");
+    // Every release's notes keep the manifest style: plain sentences, no
+    // markdown, no trailing period — the launcher prints them as bullets.
+    for (const version of ["0.5.0", "0.4.0"]) {
+      const notes = spriteManifest.changelog?.[version] ?? [];
+      expect(notes.length).toBeGreaterThan(0);
+      for (const note of notes) {
+        expect(note).not.toMatch(/`|\*\*|^- /);
+        expect(note.endsWith(".")).toBe(false);
+      }
     }
-    expect(notes.join(" ")).toMatch(/Rive/);
-    expect(notes.join(" ")).toMatch(/MP4/);
+    const notes = spriteManifest.changelog!["0.5.0"];
+    // What the user gets, not the plumbing: no script, flag or file name.
+    for (const note of notes) expect(note).not.toMatch(/\.mjs|--[a-z]|\.json\b/);
+    const text = notes.join(" ");
+    for (const claim of [/route/i, /picture/i, /pixel/i, /four ways|four facings/i, /Aseprite/, /Phaser/, /PixiJS/, /shadow/i]) {
+      expect(text).toMatch(claim);
+    }
+    expect(notes.length).toBeGreaterThanOrEqual(5);
+    expect(notes.length).toBeLessThanOrEqual(8);
+  });
+
+  test("the round's upstream is credited, and its license travels with the mode", () => {
+    expect(spriteManifest.inspiredBy).toEqual({
+      name: "aldegad/sprite-gen",
+      url: "https://github.com/aldegad/sprite-gen",
+    });
+    const root = join(import.meta.dir, "..");
+    const notice = readFileSync(join(root, "NOTICE.md"), "utf-8");
+    expect(notice).toContain("aldegad/sprite-gen");
+    expect(notice).toContain("fbd1a08");
+    expect(notice).toContain("Apache-2.0");
+    // Apache-2.0 §4(d): the upstream NOTICE text is reproduced, and it names
+    // the MIT project one of our ports reaches back to.
+    expect(notice).toContain("Copyright 2026 Alex Kim");
+    expect(notice).toContain("gykim80/perfectpixel-studio");
+    // §4(a): recipients get a copy of the License itself.
+    const license = readFileSync(join(root, "licenses", "sprite-gen-LICENSE"), "utf-8");
+    expect(license).toContain("Apache License");
+    expect(license).toContain("Version 2.0, January 2004");
   });
 
   test("the workspace model is copied from the manifest, not restated", () => {

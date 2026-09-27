@@ -127,7 +127,7 @@ describe.skipIf(!HAS_FFMPEG)("sprite-project.mjs", () => {
     const r = run(PROJECT, ["--help"]);
     expect(r.code).toBe(0);
     for (const cmd of [
-      "init", "add-ref", "add-motion", "set-motion", "set-sheet", "set-keyframe",
+      "init", "set-character", "add-ref", "add-motion", "set-motion", "set-sheet", "set-keyframe",
       "register-run", "add-video", "set-video", "remove-motion", "show",
     ]) {
       expect(r.out + r.err).toContain(cmd);
@@ -263,6 +263,16 @@ describe.skipIf(!HAS_FFMPEG)("sprite-project.mjs", () => {
         // pipeline had a perfect number for. 0 is that perfect number, and
         // the reason the pick tests `=== undefined` rather than truthiness.
         bodyDrift: 0,
+        // The head-and-torso spread, on the frames and on the cells they
+        // were cut from, and the step checks' two lists — all picked by name
+        // for the same reason. `[]` is a result ("checked, none"), not an
+        // absence, so it makes the trip too.
+        headDrift: 0,
+        // The squares sit at different x in their cells (offsets 0, 0, 8, 6):
+        // the placement the sheet drew, spread 2.074 px about its line.
+        sourceHeadDrift: 2.074,
+        nearDuplicates: [],
+        rowJumps: [],
         maxJump: 0,
         scaleDrift: 0,
         emptyFrames: [],
@@ -450,6 +460,144 @@ describe.skipIf(!HAS_FFMPEG)("sprite-project.mjs", () => {
         expect({ broken, present: "bodyDrift" in got.inspect }).toEqual({ broken, present: false });
       }
     });
+
+    test("head drifts and step pairs travel when well-formed and stay behind when not", () => {
+      // The same pick-by-name rule as `bodyDrift`, and a report from before
+      // the fields existed (the canonical `bounce-run.json`) carries none.
+      const { dir, realRun } = seedMini();
+      const old = projectJson(dir, "register-run", "--motion", "bounce",
+        "--run", join(FIXTURES, "bounce-run.json"), "--at", String(T2));
+      expect(["headDrift", "sourceHeadDrift", "nearDuplicates", "rowJumps"].filter((k) => k in old.inspect)).toEqual([]);
+
+      const payload = {
+        ...realRun,
+        inspect: {
+          ...realRun.inspect,
+          headDrift: 7.448, sourceHeadDrift: "0.765",
+          nearDuplicates: [[2, 3], [4], ["5", 6], [15, 0]], rowJumps: { "3": 4 },
+        },
+      };
+      writeFileSync(join(dir, "pairs-run.json"), JSON.stringify(payload));
+      const got = projectJson(dir, "register-run", "--motion", "bounce",
+        "--run", join(dir, "pairs-run.json"), "--at", String(T2));
+      expect({
+        headDrift: got.inspect.headDrift,
+        source: "sourceHeadDrift" in got.inspect,
+        nearDuplicates: got.inspect.nearDuplicates,
+        rowJumps: "rowJumps" in got.inspect,
+      }).toEqual({ headDrift: 7.448, source: false, nearDuplicates: [[2, 3], [15, 0]], rowJumps: false });
+    });
+
+    test("a jump's lift travels whole, one reading per frame, or not at all", () => {
+      // `--y-from cell` keeps each frame's height above the ground; `inspect`
+      // reports it per frame (px, null for an empty frame), and all zeros is
+      // the answer "no drawn height". A list that is not one entry per frame,
+      // or holds anything but a number or null, cannot say which frame rose.
+      const { dir, realRun } = seedMini();
+      const old = projectJson(dir, "register-run", "--motion", "bounce",
+        "--run", join(FIXTURES, "bounce-run.json"), "--at", String(T2));
+      expect("lift" in old.inspect).toBe(false);
+
+      const withLift = (lift: unknown) => {
+        writeFileSync(join(dir, "lift-run.json"), JSON.stringify({ ...realRun, inspect: { ...realRun.inspect, lift } }));
+        return projectJson(dir, "register-run", "--motion", "bounce", "--run", join(dir, "lift-run.json"), "--at", String(T2));
+      };
+      expect(withLift([0, 12.5, null, 3]).inspect.lift).toEqual([0, 12.5, null, 3]);
+      expect(readProject(dir).sprite.motions[0].inspect.lift).toEqual([0, 12.5, null, 3]);
+      expect(project(dir, "show", "--motion", "bounce").out).toContain("  lift above the ground (y from cell): 0, 12.5, -, 3 px");
+      for (const broken of [[0, 12.5, null], [0, "12.5", null, 3], [0, [1], 2, 3], {}, "0,1,2,3"]) {
+        expect({ broken, present: "lift" in withLift(broken).inspect }).toEqual({ broken, present: false });
+      }
+    }, 20_000);
+
+    test("an auto slice's record travels without its geometry, and a run cut on the grid drops it", () => {
+      // What `run` found when the fixed grid cut through a pose: why it
+      // sliced by ink, whether it had to force the counts, and the poses
+      // clipped anyway — the cells to look at. Cut lines and pose boxes are
+      // sheet geometry and stay in the run summary and slice.json.
+      const { dir, realRun } = seedMini();
+      const slice = {
+        mode: "auto", cell: { width: 80, height: 70 }, reason: "grid-clipped", gridClipped: [1, 2],
+        nominalCell: { width: 64, height: 64 }, grew: { left: 8, top: 0, right: 8, bottom: 6 },
+        cuts: { rows: [70], cols: [[60], [58]] }, natural: { rows: 2, cols: [2, 1] },
+        forced: { rows: false, cols: [false, true] },
+        poses: [0, 1, 2, 3].map((index) => ({ index, box: { x: 0, y: 0, w: 10, h: 10 }, at: { x: 0, y: 0 } })),
+        clipped: [{ index: 3, why: "cut" }],
+      };
+      const register = (payload: unknown) => {
+        writeFileSync(join(dir, "slice-run.json"), JSON.stringify(payload));
+        return projectJson(dir, "register-run", "--motion", "bounce", "--run", join(dir, "slice-run.json"), "--at", String(T2));
+      };
+      const kept = { mode: "auto", reason: "grid-clipped", gridClipped: [1, 2], forced: { rows: false, cols: [false, true] }, clipped: [{ index: 3, why: "cut" }] };
+      expect(register({ ...realRun, slice }).slice).toEqual(kept);
+      expect(readProject(dir).sprite.motions[0].slice).toEqual(kept);
+      expect(projectJson(dir, "show", "--motion", "bounce").slice).toEqual(kept);
+      expect(project(dir, "show", "--motion", "bounce").out).toContain(
+        "  sliced by the poses' ink — the fixed grid cut through cells 01, 02; row 1 forced (cut at its thinnest columns); clipped anyway: 03 (cut apart from a pose it touched)",
+      );
+      // Asked for outright, nothing forced or clipped: said in as many words.
+      expect(register({ ...realRun, slice: { ...slice, reason: "asked", gridClipped: undefined, forced: { rows: false, cols: [false, false] }, clipped: [] } }).slice)
+        .toEqual({ mode: "auto", reason: "asked", forced: { rows: false, cols: [false, false] }, clipped: [] });
+      expect(project(dir, "show", "--motion", "bounce").out).toContain("  sliced by the poses' ink (asked)\n");
+
+      // Cut on the fixed grid again: the record went with the frames it described.
+      expect("slice" in register(realRun)).toBe(false);
+      expect("slice" in readProject(dir).sprite.motions[0]).toBe(false);
+
+      // Never half a record.
+      for (const broken of [
+        { ...slice, mode: "grid" }, { ...slice, reason: "because" }, { ...slice, clipped: "3" },
+        { ...slice, forced: { rows: "no", cols: [] } }, { ...slice, forced: { rows: false, cols: [1] } }, "auto",
+      ]) {
+        expect({ broken, present: "slice" in register({ ...realRun, slice: broken }) }).toEqual({ broken, present: false });
+      }
+      // A malformed clipped entry is dropped on its own; the rest of the list stands.
+      expect(register({ ...realRun, slice: { ...slice, clipped: [{ index: 3, why: "cut" }, { index: -1, why: "cut" }, { index: 2, why: "odd" }] } }).slice.clipped)
+        .toEqual([{ index: 3, why: "cut" }]);
+    }, 20_000);
+
+    test("a pixel run's lattice check travels without its palette path; a broken one stays behind", () => {
+      // `inspect.pixel`: whether the frames still sit on the lattice `pixel`
+      // cut them to (binary alpha, whole blocks on the N-grid, colours in the
+      // pinned palette) and, when not, which frames left it. The palette's
+      // absolute path stays in the run summary: the sidecar names the pinned
+      // palette once, as character.pixel.palette.
+      const { dir, realRun } = seedMini();
+      const pixel = {
+        pitch: { x: 8.0625, y: 8 }, scale: 2, held: false, palette: "/abs/knight/motions/walk/palette.json",
+        paletteChecked: true, softAlphaFrames: [1, 3], offGridFrames: [2],
+      };
+      const register = (value: unknown) => {
+        writeFileSync(join(dir, "pixel-run.json"), JSON.stringify({ ...realRun, inspect: { ...realRun.inspect, pixel: value } }));
+        return projectJson(dir, "register-run", "--motion", "bounce", "--run", join(dir, "pixel-run.json"), "--at", String(T2));
+      };
+      const { palette: _path, ...kept } = pixel;
+      expect(register(pixel).inspect.pixel).toEqual(kept);
+      expect(readProject(dir).sprite.motions[0].inspect.pixel).toEqual(kept);
+      expect(JSON.stringify(readProject(dir))).not.toContain("/abs/knight");
+      expect(project(dir, "show", "--motion", "bounce").out).toContain(
+        "  pixel lattice broken — soft alpha in frames 01, 03; blocks off the 2x grid in frame 02 · pitch 8.06×8, scale 2x · palette checked\n",
+      );
+
+      const held = { pitch: { x: 8, y: 8 }, scale: 1, held: true, palette: null, paletteChecked: false };
+      expect(register(held).inspect.pixel).toEqual({ pitch: { x: 8, y: 8 }, scale: 1, held: true, paletteChecked: false });
+      expect(project(dir, "show", "--motion", "bounce").out).toContain("  pixel lattice held · pitch 8×8, scale 1x · palette not checked\n");
+
+      // A long list is cut the way inspect's warnings cut it.
+      register({ ...pixel, softAlphaFrames: [0, 1, 2, 3, 4, 5, 6, 7], offGridFrames: undefined });
+      expect(project(dir, "show", "--motion", "bounce").out).toContain("soft alpha in frames 00, 01, 02, 03, 04, 05, … (8 in all) ·");
+
+      // Never half a check; a malformed frame list goes on its own.
+      for (const broken of [
+        { ...pixel, held: "no" }, { ...pixel, scale: 1.5 }, { ...pixel, scale: 0 }, { ...pixel, pitch: { x: 8 } },
+        { ...pixel, pitch: { x: 8, y: -1 } }, { ...pixel, paletteChecked: undefined }, true,
+      ]) {
+        expect({ broken, present: "pixel" in register(broken).inspect }).toEqual({ broken, present: false });
+      }
+      expect(register({ ...pixel, softAlphaFrames: [1, -1, "3", 3], offGridFrames: "2" }).inspect.pixel)
+        .toEqual({ pitch: pixel.pitch, scale: 2, held: false, paletteChecked: true, softAlphaFrames: [1, 3] });
+      expect("pixel" in register(undefined).inspect).toBe(false);
+    }, 20_000);
 
     test("a malformed anchor point is dropped, not carried into the sidecar", () => {
       // A half-written or hand-edited point would be drawn as a guide with no
@@ -1667,6 +1815,22 @@ describe.skipIf(!HAS_FFMPEG)("sprite-project.mjs", () => {
       expect({ crop: "crop" in dropped.inspect, scale: "scale" in dropped.inspect }).toEqual({ crop: false, scale: false });
     });
 
+    test("keyResidue goes into the sidecar's inspect — 0 included — and a run without it carries none", () => {
+      // The viewer reads project.json alone; a residue measured by `loop` and
+      // left out here would never reach the stage.
+      const { dir, run: summary } = seedLoop();
+      const measured = JSON.parse(registerLoop(dir, { ...summary, inspect: { ...summary.inspect, keyResidue: 0.0158, keyResidueEdge: 0.9 } }).out);
+      expect(measured.inspect.keyResidue).toBe(0.0158);
+      // The fat report's edge share stays in inspect.json, not in the sidecar.
+      expect("keyResidueEdge" in measured.inspect).toBe(false);
+
+      const clean = JSON.parse(registerLoop(dir, { ...summary, inspect: { ...summary.inspect, keyResidue: 0 } }).out);
+      expect(clean.inspect.keyResidue).toBe(0);
+
+      const matted = JSON.parse(registerLoop(dir, summary).out);
+      expect("keyResidue" in matted.inspect).toBe(false);
+    }, 20_000);
+
     test("every export is registered with its size in bytes", () => {
       const { dir, run: summary } = seedLoop();
       registerLoop(dir, summary);
@@ -1988,6 +2152,89 @@ describe.skipIf(!HAS_FFMPEG)("sprite-project.mjs", () => {
       expect(doc.assets.filter((a: any) => a.id === "bounce-export-mp4")).toHaveLength(1);
       expect(doc.provenance.filter((e: any) => e.toAssetId === "bounce-export-mp4")).toHaveLength(1);
       expect(asset(dir, "bounce-export-mp4").metadata.repeat).toBe(3);
+    }, EXPORT_TIMEOUT_MS);
+
+    test("an Aseprite export of a motion is filed like the PNG sequence, its shadow recorded", () => {
+      const { dir } = seedReady();
+      const report = exportOf(dir, "bounce", "--format", "aseprite", "--shadow", "--shadow-opacity", "0.5");
+      const r = register(dir, report);
+      expect(r.code).toBe(0);
+      expect(asset(dir, "bounce-export-aseprite")).toEqual({
+        id: "bounce-export-aseprite",
+        type: "image",
+        uri: "motions/bounce/exports/bounce-aseprite.zip",
+        name: "bounce export (aseprite)",
+        metadata: {
+          width: 64, height: 64, fps: 8, duration: 0.5, frames: 4, scale: 1,
+          shadow: { squash: 0.25, shear: 0.8, opacity: 0.5, blur: 3, color: "#140f1e" },
+          container: "zip",
+          size: readFileSync(report.out).byteLength,
+        },
+        createdAt: T2,
+        status: "ready",
+      });
+      expect(edgeTo(dir, "bounce-export-aseprite").operation.params).toEqual({
+        tool: "sprite-sheet.mjs", step: "export", format: "aseprite", scale: 1,
+        shadow: { squash: 0.25, shear: 0.8, opacity: 0.5, blur: 3, color: "#140f1e" },
+        inputs: BOUNCE_FRAMES,
+      });
+      expect(motionOf(dir, "bounce").exports).toEqual({ aseprite: "bounce-export-aseprite" });
+    }, EXPORT_TIMEOUT_MS);
+
+    test("the character's Aseprite sheet is registered on the character, off every frame on it", () => {
+      const { dir } = seedReady();
+      const report = sheetJson("export", dir, "--format", "aseprite");
+      expect(report.scope).toBe("character");
+      const r = register(dir, report);
+      expect(r.code).toBe(0);
+      const id = `${basename(dir)}-export-aseprite`;
+      expect(JSON.parse(r.out)).toMatchObject({ asset: id, format: "aseprite", scope: "character", motions: ["bounce"] });
+      expect(asset(dir, id)).toEqual({
+        id,
+        type: "image",
+        uri: `exports/${basename(dir)}-aseprite.zip`,
+        name: `${readProject(dir).sprite.character.name} (aseprite)`,
+        metadata: {
+          width: report.sheet.w, height: report.sheet.h, frames: 4, motionCount: 1, scale: 1,
+          container: "zip", size: readFileSync(report.out).byteLength,
+        },
+        createdAt: T2,
+        status: "ready",
+      });
+      const edge = edgeTo(dir, id);
+      expect(edge.fromAssetId).toBe("bounce-frame-00");
+      expect(edge.operation.params).toEqual({
+        tool: "sprite-sheet.mjs", step: "export", format: "aseprite", scale: 1,
+        motions: ["bounce"], tags: [{ name: "bounce", from: 0, to: 3 }],
+        inputs: BOUNCE_FRAMES,
+      });
+      expect(readProject(dir).sprite.exports).toEqual({ aseprite: id });
+      // A report whose frames are not the ones registered now is refused.
+      const stale = register(dir, { ...report, frames: report.frames.slice(1) });
+      expect(stale.code).toBe(1);
+      expect(stale.err).toMatch(/not the frames registered/);
+    }, EXPORT_TIMEOUT_MS);
+
+    test("new frames and remove-motion retire the character's sheet with its .riv", () => {
+      const { dir, realRun } = seedReady();
+      const sheet = `${basename(dir)}-export-aseprite`;
+      const riv = `${basename(dir)}-export-riv`;
+      register(dir, sheetJson("export", dir, "--format", "aseprite"));
+      register(dir, sheetJson("rive", dir));
+      expect(readProject(dir).sprite.exports).toEqual({ aseprite: sheet, riv });
+      const r = run(PROJECT, ["register-run", "--dir", dir, "--motion", "bounce", "--run", "-", "--json"],
+        JSON.stringify(realRun));
+      expect(r.code).toBe(0);
+      expect(r.err).toMatch(new RegExp(`retired ${sheet}`));
+      expect(r.err).toMatch(new RegExp(`retired ${riv}`));
+      expect("exports" in readProject(dir).sprite).toBe(false);
+      expect(readProject(dir).assets.some((a: any) => a.id === sheet)).toBe(false);
+
+      register(dir, sheetJson("export", dir, "--format", "aseprite"));
+      const removed = projectJson(dir, "remove-motion", "--motion", "bounce");
+      expect(removed.removedAssets).toContain(sheet);
+      expect(removed.orphanedPaths).toContain(`exports/${basename(dir)}-aseprite.zip`);
+      expect(readProject(dir).sprite.exports).toBeUndefined();
     }, EXPORT_TIMEOUT_MS);
 
     test("a lossless .riv says so in the sidecar", () => {
@@ -2424,6 +2671,836 @@ describe.skipIf(!HAS_FFMPEG)("sprite-project.mjs", () => {
       expect(r.err).toMatch(/flame-to-ember.*remove it first/);
       projectJson(dir, "remove-motion", "--motion", "flame-to-ember");
       projectJson(dir, "remove-motion", "--motion", "ember");
+    });
+  });
+
+  /**
+   * The 0.5.0 sidecar, as its only writer writes it: the route, the pixel
+   * spec and the asymmetry lock on the character; anchors and directions;
+   * breathe and mirror runs; the recorded prompt parts; the pinned palette.
+   * The shapes are `domain.ts`'s and `references/project-json.md`'s.
+   */
+  describe("0.5.0 sidecar", () => {
+    const SEED = join(import.meta.dir, "..", "seed", "lumi", "project.json");
+
+    /** A ready `bounce` (the canonical run) facing right. */
+    function readyBounce() {
+      const { dir } = seedMini();
+      projectJson(dir, "register-run", "--motion", "bounce", "--run", join(FIXTURES, "bounce-run.json"), "--at", String(T1));
+      projectJson(dir, "set-motion", "--motion", "bounce", "--direction", "right");
+      return dir;
+    }
+
+    /** A sprite run summary for motion `id`, over a copy of bounce's files —
+     *  the shape `run`, `breathe` and `mirror` share. */
+    function spriteRun(dir: string, id: string, extra: Record<string, unknown> = {}) {
+      const from = join(dir, "motions", "bounce");
+      const to = join(dir, "motions", id);
+      mkdirSync(join(to, "frames"), { recursive: true });
+      for (const f of ["00", "01", "02", "03"]) cpSync(join(from, "frames", `${f}.png`), join(to, "frames", `${f}.png`));
+      for (const f of ["sheet.png", "atlas.json", "preview.gif"]) cpSync(join(from, f), join(to, f));
+      const base = JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8").replaceAll("motions/bounce", `motions/${id}`));
+      delete base.sheetRaw;
+      delete base.cells;
+      return { ...base, name: id, ...extra };
+    }
+
+    const register = (dir: string, motion: string, summary: unknown, ...more: string[]) =>
+      run(PROJECT, ["register-run", "--dir", dir, "--motion", motion, "--run", "-", "--json", ...more], JSON.stringify(summary));
+
+    /** A mirror summary of `bounce` for motion `id`, as `sprite-sheet.mjs
+     *  mirror` writes it (timing, loop and anchor from the source atlas). */
+    const mirrorFlip = (dir: string, id: string, extra: Record<string, unknown> = {}) =>
+      spriteRun(dir, id, { source: "mirror", mirrorOf: "bounce", ...extra });
+
+    const BREATHE = { depth: 0.02, breaths: 1, lag: 0.15, mode: "smooth", anatomy: { rigidRow: 30, axisX: 32, from: "detected" } };
+
+    describe("the character", () => {
+      test("init records the route, the pixel spec and the asymmetry lock", () => {
+        const dir = fresh();
+        projectJson(dir, "init", "--name", "Pip", "--purpose", "game", "--pixel", "32", "--colors", "16",
+          "--asymmetric", "The sword is always in the right hand.");
+        expect(readProject(dir).sprite.character).toEqual({
+          name: "Pip", description: "", style: "", cell: { width: 256, height: 256 }, facing: "right",
+          purpose: "game", pixel: { logicalHeight: 32, colors: 16 },
+          asymmetric: "The sword is always in the right hand.",
+        });
+      });
+
+      test("show names the route, the pixel height and the lock, so a later turn does not ask again", () => {
+        const dir = fresh();
+        projectJson(dir, "init", "--name", "Pip", "--purpose", "game", "--pixel", "32",
+          "--asymmetric", "The sword is always in the right hand.");
+        const lines = project(dir, "show").out.split("\n");
+        expect(lines[1]).toBe("  purpose: game · pixel art, 32 px tall · asymmetric: The sword is always in the right hand.");
+        // Nothing recorded, nothing said: an older character keeps its summary.
+        const seed = fresh();
+        cpSync(SEED, join(seed, "project.json"));
+        expect(project(seed, "show").out).not.toMatch(/purpose:|pixel art|asymmetric:/);
+      });
+
+      test("init refuses a route it does not know, and a palette size without pixel art", () => {
+        const dir = fresh();
+        expect(project(dir, "init", "--name", "Pip", "--purpose", "cutscene").err).toMatch(/--purpose: expected one of game, loop, mascot, animate/);
+        const r = project(dir, "init", "--name", "Pip", "--colors", "16");
+        expect(r.code).toBe(1);
+        expect(r.err).toMatch(/--colors.*--pixel/);
+        expect(existsSync(join(dir, "project.json"))).toBe(false);
+      });
+
+      test("set-character changes only the flags given", () => {
+        const { dir } = seedMini();
+        const before = readProject(dir).sprite.character;
+        const out = projectJson(dir, "set-character", "--purpose", "mascot", "--style", "flat vector, thick outline");
+        expect(out).toEqual({ ...before, style: "flat vector, thick outline", purpose: "mascot" });
+        projectJson(dir, "set-character", "--description", "A blob that bounces.", "--facing", "left");
+        expect(readProject(dir).sprite.character).toMatchObject({
+          name: "Mini", description: "A blob that bounces.", style: "flat vector, thick outline", facing: "left", purpose: "mascot",
+        });
+        expect(project(dir, "set-character", "--facing", "up").err).toMatch(/--facing/);
+      });
+
+      test("set-character sets and takes back the lock and the pixel spec", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "set-character", "--asymmetric", "Scar over the left eye.", "--pixel", "48");
+        expect(readProject(dir).sprite.character).toMatchObject({ asymmetric: "Scar over the left eye.", pixel: { logicalHeight: 48 } });
+        // One answer can change without restating the other.
+        projectJson(dir, "set-character", "--colors", "24");
+        expect(readProject(dir).sprite.character.pixel).toEqual({ logicalHeight: 48, colors: 24 });
+        projectJson(dir, "set-character", "--asymmetric", "", "--no-pixel");
+        const character = readProject(dir).sprite.character;
+        expect("asymmetric" in character).toBe(false);
+        expect("pixel" in character).toBe(false);
+        expect(project(dir, "set-character", "--no-pixel", "--pixel", "32").err).toMatch(/--no-pixel/);
+        expect(project(dir, "set-character", "--colors", "300", "--pixel", "32").err).toMatch(/--colors/);
+      });
+
+      test("a 0.4.x file is rewritten byte for byte by a command that changes nothing", () => {
+        // The seed is what every new user opens; it is the older file the
+        // new writer is most likely to touch.
+        const dir = fresh();
+        cpSync(SEED, join(dir, "project.json"));
+        const bytes = readFileSync(SEED, "utf-8");
+        projectJson(dir, "set-character");
+        expect(readFileSync(join(dir, "project.json"), "utf-8")).toBe(bytes);
+        projectJson(dir, "set-motion", "--motion", "idle");
+        expect(readFileSync(join(dir, "project.json"), "utf-8")).toBe(bytes);
+        const shown = projectJson(dir, "show");
+        expect("staleMirrors" in shown).toBe(false);
+        for (const m of shown.motions) {
+          for (const key of ["direction", "source", "mirrorOf"]) expect(key in m).toBe(false);
+        }
+      });
+    });
+
+    describe("anchors and directions", () => {
+      const refFile = (dir: string, name: string) => {
+        buildSheet(join(dir, "refs", `${name}.png`), { cell: 64, rows: 1, cols: 1 });
+        return `refs/${name}.png`;
+      };
+
+      test("an anchor needs its direction, and holds it alone", () => {
+        const { dir } = seedMini();
+        const uri = refFile(dir, "anchor-left");
+        const missing = project(dir, "add-ref", "--id", "anchor-left", "--file", uri, "--role", "anchor", "--uploaded");
+        expect(missing.code).toBe(1);
+        expect(missing.err).toMatch(/--direction: an anchor faces one direction/);
+        projectJson(dir, "add-ref", "--id", "anchor-left", "--file", uri, "--role", "anchor", "--direction", "left", "--uploaded");
+        expect(readProject(dir).sprite.refs).toContainEqual({
+          id: "anchor-left", asset: "ref-anchor-left", role: "anchor", label: "Anchor Left", direction: "left",
+        });
+        // One anchor per direction; re-registering the same id replaces it.
+        const second = project(dir, "add-ref", "--id", "side", "--file", refFile(dir, "side"), "--role", "anchor", "--direction", "left", "--uploaded");
+        expect(second.err).toMatch(/'anchor-left' is already the left anchor/);
+        projectJson(dir, "add-ref", "--id", "anchor-left", "--file", uri, "--role", "anchor", "--direction", "left", "--uploaded");
+        // No other role takes a direction.
+        expect(project(dir, "add-ref", "--id", "t", "--file", uri, "--role", "turnaround", "--direction", "front", "--uploaded").err)
+          .toMatch(/--direction: only an anchor/);
+        expect(project(dir, "add-ref", "--id", "x", "--file", uri, "--role", "anchor", "--direction", "front-left", "--uploaded").err)
+          .toMatch(/--direction: expected one of front, back, left, right/);
+        const shown = projectJson(dir, "show").refs.find((r: any) => r.id === "anchor-left");
+        expect(shown).toMatchObject({ role: "anchor", direction: "left", origin: "uploaded" });
+      });
+
+      test("an anchor can be cut out of a frame: --derived-from takes any asset id", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-ref", "--id", "anchor-right", "--file", refFile(dir, "anchor-right"), "--role", "anchor",
+          "--direction", "right", "--derived-from", "bounce-frame-00", "--at", String(T2));
+        expect(readProject(dir).provenance.find((e: any) => e.toAssetId === "ref-anchor-right")).toEqual({
+          toAssetId: "ref-anchor-right", fromAssetId: "bounce-frame-00",
+          operation: { type: "derive", actor: "agent", timestamp: T2, params: { op: "crop" } },
+        });
+      });
+
+      test("add-motion and set-motion record the direction a motion faces", () => {
+        const { dir } = seedMini();
+        const walk = projectJson(dir, "add-motion", "--id", "walk-left", "--label", "Walk · left", "--rows", "1", "--cols", "4",
+          "--fps", "8", "--direction", "left");
+        expect(walk.direction).toBe("left");
+        expect(Object.keys(readProject(dir).sprite.motions[1]).slice(0, 4)).toEqual(["id", "label", "direction", "prompt"]);
+        expect(projectJson(dir, "set-motion", "--motion", "walk-left", "--direction", "back").direction).toBe("back");
+        expect(project(dir, "set-motion", "--motion", "walk-left", "--direction", "up").err).toMatch(/--direction/);
+        expect(projectJson(dir, "show").motions.find((m: any) => m.id === "walk-left").direction).toBe("back");
+      });
+    });
+
+    describe("recorded prompt parts", () => {
+      const PARTS = {
+        builder: "sheet-prompt/1", action: "a 4-frame bounce: squash, rise, apex, land",
+        guards: ["no-shadow"], guide: { rows: 2, cols: 2, cell: { width: 64, height: 64 }, safeMargin: { x: 4, y: 6 } },
+      };
+
+      test("set-motion --prompt-parts records the parts with the prompt they built", () => {
+        const { dir } = seedMini();
+        const out = projectJson(dir, "set-motion", "--motion", "bounce", "--prompt", "BUILT TEXT", "--prompt-parts", JSON.stringify(PARTS));
+        expect(out.prompt).toBe("BUILT TEXT");
+        expect(out.promptParts).toEqual(PARTS);
+        expect(projectJson(dir, "show", "--motion", "bounce").promptParts).toEqual(PARTS);
+        // A prompt written by hand afterwards is no longer what the parts built.
+        const edited = projectJson(dir, "set-motion", "--motion", "bounce", "--prompt", "hand-written");
+        expect("promptParts" in edited).toBe(false);
+      });
+
+      test("parts without their prompt, or parts that could not rebuild it, are refused", () => {
+        const { dir } = seedMini();
+        const before = readProject(dir);
+        expect(project(dir, "set-motion", "--motion", "bounce", "--prompt-parts", JSON.stringify(PARTS)).err)
+          .toMatch(/--prompt-parts: record the prompt they built/);
+        for (const [bad, message] of [
+          [{ ...PARTS, action: "" }, /action/],
+          [{ ...PARTS, guards: ["ok", 3] }, /guards/],
+          [{ ...PARTS, guide: { rows: 2, cols: 2 } }, /guide must be/],
+        ] as const) {
+          const r = project(dir, "set-motion", "--motion", "bounce", "--prompt", "x", "--prompt-parts", JSON.stringify(bad));
+          expect(r.code).toBe(1);
+          expect(r.err).toMatch(message);
+        }
+        expect(project(dir, "set-motion", "--motion", "bounce", "--prompt", "x", "--prompt-parts", "{nope").err).toMatch(/not valid JSON/);
+        expect(readProject(dir)).toEqual(before);
+      });
+
+      test("the guide's safe margin may be fractional, and the refusal says which parts must be whole", () => {
+        const { dir } = seedMini();
+        const half = { ...PARTS, guide: { ...PARTS.guide, safeMargin: { x: 4.5, y: 6.25 } } };
+        expect(projectJson(dir, "set-motion", "--motion", "bounce", "--prompt", "x", "--prompt-parts", JSON.stringify(half)).promptParts).toEqual(half);
+        const bad = project(dir, "set-motion", "--motion", "bounce", "--prompt", "x", "--prompt-parts",
+          JSON.stringify({ ...PARTS, guide: { ...PARTS.guide, cell: { width: 64.5, height: 64 } } }));
+        expect(bad.code).toBe(1);
+        expect(bad.err).toMatch(/rows, cols and the cell in whole numbers above 0, the safe margin in pixels at or above 0 \(fractions allowed\)/);
+        expect(bad.err).not.toMatch(/in whole pixels/);
+      });
+    });
+
+    describe("breathe runs", () => {
+      test("the frames hang off the registered still, with the parameters that warped them", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--rows", "2", "--cols", "2", "--fps", "8", "--source", "breathe");
+        const summary = spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: BREATHE });
+        const r = register(dir, "idle", summary, "--at", String(T2));
+        expect(r.code).toBe(0);
+        const motion = JSON.parse(r.out);
+        expect(motion).toMatchObject({ source: "breathe", status: "ready", frames: ["idle-frame-00", "idle-frame-01", "idle-frame-02", "idle-frame-03"] });
+        expect(motion.breathe).toEqual({ still: "ref-portrait", ...BREATHE });
+        const edge = readProject(dir).provenance.find((e: any) => e.toAssetId === "idle-frame-02");
+        expect(edge).toEqual({
+          toAssetId: "idle-frame-02", fromAssetId: "ref-portrait",
+          operation: { type: "derive", actor: "agent", timestamp: T2, params: {
+            tool: "sprite-sheet.mjs", step: "breathe", frameIndex: 2, depth: 0.02, breaths: 1, lag: 0.15, mode: "smooth",
+          } },
+        });
+        expect(project(dir, "show", "--motion", "idle").out).toMatch(/breathe of ref-portrait \(refs\/portrait\.png\): depth 0\.02, 1 breath, lag 0\.15, smooth, rigid row 30, axis 32 \(detected\)/);
+      });
+
+      test("the head-offset extremes are kept with the record, and show prints them beside it", () => {
+        // `breathe` reports them at the top of its summary (image y, negative
+        // is up): the range, the travel, and the frames at each end — the
+        // answer to "how far does the head move".
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--source", "breathe");
+        const headOffset = { min: -3, max: 0, travel: 3, highest: [2], lowest: [0, 3] };
+        const summary = spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: BREATHE, headOffset });
+        const motion = JSON.parse(register(dir, "idle", summary, "--at", String(T2)).out);
+        expect(motion.breathe).toEqual({ still: "ref-portrait", ...BREATHE, headOffset });
+        expect(projectJson(dir, "show", "--motion", "idle").breathe.headOffset).toEqual(headOffset);
+        const shown = project(dir, "show", "--motion", "idle").out.split("\n");
+        const at = shown.findIndex((line) => line.startsWith("  breathe of ref-portrait"));
+        // Word for word what `sprite-sheet.mjs breathe` printed for the run.
+        expect(shown[at + 1]).toBe("  head offset -3..0px (travel 3px: highest in frame 2, lowest in 0, 3)");
+
+        // A summary from before the extremes were reported, or a broken one, keeps the rest of the record.
+        for (const broken of [undefined, { ...headOffset, travel: "3" }, { ...headOffset, highest: [2.5] }]) {
+          const again = JSON.parse(register(dir, "idle", { ...summary, headOffset: broken }, "--at", String(T2)).out);
+          expect({ broken, breathe: again.breathe }).toEqual({ broken, breathe: { still: "ref-portrait", ...BREATHE } });
+        }
+        expect(project(dir, "show", "--motion", "idle").out).not.toContain("head offset");
+      });
+
+      test("a breathe is declared with no grid and no rate: the run brings both", () => {
+        // The documented route-A form is `add-motion --id idle --source
+        // breathe`: the breathe run times itself (`breathe --fps`, default 8)
+        // and register-run takes the rate and the grid from it, so asking the
+        // agent for a number here would only invite one that disagrees.
+        const dir = readyBounce();
+        const planned = projectJson(dir, "add-motion", "--id", "idle", "--source", "breathe");
+        expect(planned).toMatchObject({ source: "breathe", grid: { rows: 1, cols: 1 }, fps: 8, status: "planned" });
+        const summary = spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: BREATHE, fps: 6 });
+        const motion = JSON.parse(register(dir, "idle", summary).out);
+        expect({ fps: motion.fps, grid: motion.grid }).toEqual({ fps: 6, grid: summary.grid });
+        // Every other sprite motion still names its rate: a sheet is sliced at
+        // whatever rate the agent planned, and nothing downstream supplies it.
+        const sheet = project(dir, "add-motion", "--id", "walk", "--rows", "2", "--cols", "4");
+        expect(sheet.code).toBe(1);
+        expect(sheet.err).toMatch(/--fps/);
+      });
+
+      test("an unregistered still is refused with the command that registers it", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--rows", "2", "--cols", "2", "--fps", "8");
+        buildSheet(join(dir, "refs", "upload.png"), { cell: 64, rows: 1, cols: 1 });
+        const before = readProject(dir);
+        const r = register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "refs/upload.png", breathe: BREATHE }));
+        expect(r.code).toBe(1);
+        expect(r.err).toMatch(/the still refs\/upload\.png is not registered — register it first: add-ref .*--uploaded/);
+        expect(readProject(dir)).toEqual(before);
+      });
+
+      test("half a breathe block, or a still this run replaces, is refused", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--rows", "2", "--cols", "2", "--fps", "8");
+        const { mode: _mode, ...half } = BREATHE;
+        expect(register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: half })).err)
+          .toMatch(/breathe block is missing or has a malformed mode/);
+        // Warping bounce's own frame 00 into bounce's frames would overwrite
+        // the input — and a frame is not a still in any case: it goes with
+        // its motion. The refusal names the reference to make of it.
+        const self = register(dir, "bounce", { ...JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8")),
+          source: "breathe", still: "motions/bounce/frames/00.png", breathe: BREATHE });
+        expect(self.code).toBe(1);
+        expect(self.err).toMatch(/is bounce-frame-00, a frame of bounce — a still must be a reference.*add-ref .*--derived-from bounce-frame-00/);
+      });
+
+      test("only a reference is a still: another motion's frame or a preview is refused, a ref cut from a frame outlives it", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--rows", "2", "--cols", "2", "--fps", "8");
+        const before = readProject(dir);
+        // Another motion's frame: re-running or removing bounce would leave
+        // idle's breathe naming a frame that is gone.
+        const frame = register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "motions/bounce/frames/00.png", breathe: BREATHE }));
+        expect(frame.code).toBe(1);
+        expect(frame.err).toMatch(/is bounce-frame-00, a frame of bounce — .*--derived-from bounce-frame-00/);
+        // A registered asset that is not one picture of the character.
+        const gif = register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "motions/bounce/preview.gif", breathe: BREATHE }));
+        expect(gif.code).toBe(1);
+        expect(gif.err).toMatch(/is bounce-gif, which is not a reference/);
+        expect(readProject(dir)).toEqual(before);
+
+        // The route the refusal names: the frame copied under refs/ and
+        // registered as a reference derived from it.
+        cpSync(join(dir, "motions", "bounce", "frames", "00.png"), join(dir, "refs", "bounce-still.png"));
+        projectJson(dir, "add-ref", "--id", "bounce-still", "--file", "refs/bounce-still.png", "--role", "custom", "--derived-from", "bounce-frame-00");
+        expect(register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "refs/bounce-still.png", breathe: BREATHE })).code).toBe(0);
+        projectJson(dir, "remove-motion", "--motion", "bounce");
+        const doc = readProject(dir);
+        const still = doc.sprite.motions.find((m: any) => m.id === "idle").breathe.still;
+        expect(still).toBe("ref-bounce-still");
+        expect(doc.assets.some((a: any) => a.id === still)).toBe(true);
+      });
+
+      test("a breathe or mirror summary carrying a kind is refused", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--rows", "2", "--cols", "2", "--fps", "8");
+        const breathe = register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: BREATHE, kind: "loop" }));
+        expect(breathe.code).toBe(1);
+        expect(breathe.err).toMatch(/a breathe summary is a sprite run — it has no kind 'loop'/);
+        const mirror = register(dir, "idle", spriteRun(dir, "idle", { source: "mirror", mirrorOf: "bounce", kind: "loop" }));
+        expect(mirror.code).toBe(1);
+        expect(mirror.err).toMatch(/a mirror summary is a sprite run — it has no kind 'loop'/);
+      });
+
+      test("a sheet run over a breathe motion drops the record and corrects the source", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "idle", spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: BREATHE })).code).toBe(0);
+        const again = JSON.parse(register(dir, "idle", spriteRun(dir, "idle")).out);
+        expect(again.source).toBe("sheet");
+        expect("breathe" in again).toBe(false);
+      });
+    });
+
+    describe("mirror runs", () => {
+      const mirrorRun = (dir: string, id: string, extra: Record<string, unknown> = {}) =>
+        spriteRun(dir, id, { source: "mirror", mirrorOf: "bounce", ...extra });
+
+      test("a mirror hangs frame i off its source's frame i and faces the other side", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        const r = register(dir, "bounce-left", mirrorRun(dir, "bounce-left"), "--at", String(T2));
+        expect(r.code).toBe(0);
+        const motion = JSON.parse(r.out);
+        expect(motion).toMatchObject({ source: "mirror", mirrorOf: "bounce", direction: "left", status: "ready" });
+        const edge = readProject(dir).provenance.find((e: any) => e.toAssetId === "bounce-left-frame-03");
+        expect(edge.fromAssetId).toBe("bounce-frame-03");
+        expect(edge.operation.params).toEqual({ tool: "sprite-sheet.mjs", step: "mirror", frameIndex: 3 });
+        expect(projectJson(dir, "show").motions.find((m: any) => m.id === "bounce-left"))
+          .toMatchObject({ direction: "left", source: "mirror", mirrorOf: "bounce" });
+      });
+
+      test("a mirror drops a prompt sheet-prompt built for the motion, and keeps one written by hand", () => {
+        const dir = readyBounce();
+        const parts = JSON.stringify({ builder: "sheet-prompt/1", action: "bounce", guards: ["state:generic", "loop-close"] });
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        projectJson(dir, "set-motion", "--motion", "bounce-left", "--prompt", "A built sheet prompt.", "--prompt-parts", parts);
+        const built = JSON.parse(register(dir, "bounce-left", mirrorRun(dir, "bounce-left")).out);
+        // No sheet was drawn from it: the text and the parts that built it go.
+        expect(built.prompt).toBe("");
+        expect("promptParts" in built).toBe(false);
+        expect(readProject(dir).sprite.motions.find((m: any) => m.id === "bounce-left").promptParts).toBeUndefined();
+
+        projectJson(dir, "add-motion", "--id", "hand", "--rows", "2", "--cols", "2", "--fps", "8", "--prompt", "Flip of the bounce.");
+        const hand = JSON.parse(register(dir, "hand", mirrorRun(dir, "hand")).out);
+        expect(hand.prompt).toBe("Flip of the bounce.");
+      });
+
+      test("a mirror is refused on a source it cannot flip", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "m", "--rows", "2", "--cols", "2", "--fps", "8");
+        const refused = (summary: unknown) => register(dir, "m", summary).err;
+        expect(refused(mirrorRun(dir, "m", { mirrorOf: "nope" }))).toMatch(/mirrorOf 'nope' is not a motion/);
+        expect(refused(mirrorRun(dir, "m", { mirrorOf: "m" }))).toMatch(/cannot be a mirror of itself/);
+        expect(refused({ ...mirrorRun(dir, "m"), frames: mirrorRun(dir, "m").frames.slice(0, 3) })).toMatch(/4 registered frames and this run 3/);
+        projectJson(dir, "set-motion", "--motion", "bounce", "--direction", "front");
+        expect(refused(mirrorRun(dir, "m"))).toMatch(/faces front — a mirror flips one side into the other/);
+        projectJson(dir, "set-motion", "--motion", "bounce", "--direction", "right");
+        projectJson(dir, "set-motion", "--motion", "m", "--direction", "right");
+        expect(refused(mirrorRun(dir, "m"))).toMatch(/'m' faces right, but a mirror of bounce \(right\) faces left/);
+        projectJson(dir, "set-motion", "--motion", "bounce", "--status", "processing");
+        expect(refused(mirrorRun(dir, "m"))).toMatch(/is processing, not ready/);
+      });
+
+      test("a source with no direction is named, with the command that gives it one", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "register-run", "--motion", "bounce", "--run", join(FIXTURES, "bounce-run.json"));
+        projectJson(dir, "add-motion", "--id", "m", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "m", mirrorRun(dir, "m")).err).toMatch(/has no direction — .*set-motion --motion bounce --direction left\|right/);
+      });
+
+      test("re-running the source notes the mirror, and show lists it stale until it is mirrored again", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left"), "--at", String(T2)).code).toBe(0);
+        expect("staleMirrors" in projectJson(dir, "show")).toBe(false);
+
+        const T3 = T2 + 1000;
+        const again = run(PROJECT, ["register-run", "--dir", dir, "--motion", "bounce", "--run", join(FIXTURES, "bounce-run.json"), "--at", String(T3), "--json"]);
+        expect(again.code).toBe(0);
+        expect(again.err).toMatch(/note: bounce-left mirrors the frames this run replaced/);
+        expect(projectJson(dir, "show").staleMirrors).toEqual([
+          { id: "bounce-left", mirrorOf: "bounce", reason: "bounce was registered again after it was mirrored" },
+        ]);
+        // The command, not a bare "mirror it again": the source's folder and the mirror's id.
+        const redo = "mirror it again from <character>/motions/bounce ('sprite-sheet.mjs mirror <character>/motions/bounce --name bounce-left') and register it";
+        expect(project(dir, "show").out).toContain(`stale mirror: bounce-left (of bounce) — bounce was registered again after it was mirrored; ${redo}`);
+        expect(projectJson(dir, "show", "--motion", "bounce-left").stale).toBe("bounce was registered again after it was mirrored");
+        expect(project(dir, "show", "--motion", "bounce-left").out).toContain(`stale: bounce was registered again after it was mirrored — ${redo}`);
+        // Still a mirror — a note, not a status flip.
+        expect(readProject(dir).sprite.motions.find((m: any) => m.id === "bounce-left").status).toBe("ready");
+
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left"), "--at", String(T3 + 1000)).code).toBe(0);
+        expect("staleMirrors" in projectJson(dir, "show")).toBe(false);
+      });
+
+      test("a loop, a transition or a mirror is no source, and a motion a mirror is made from cannot become one", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "flame", "--kind", "loop", "--fps", "12");
+        projectJson(dir, "add-motion", "--id", "ember", "--kind", "loop", "--fps", "12");
+        projectJson(dir, "add-motion", "--kind", "transition", "--from", "flame", "--to", "ember");
+        projectJson(dir, "add-motion", "--id", "m", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "m", mirrorRun(dir, "m", { mirrorOf: "flame" })).err).toMatch(/mirrorOf 'flame' is a loop — loops and transitions are not mirrored/);
+        expect(register(dir, "m", mirrorRun(dir, "m", { mirrorOf: "flame-to-ember" })).err).toMatch(/mirrorOf 'flame-to-ember' is a transition/);
+
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left")).code).toBe(0);
+        expect(register(dir, "m", mirrorRun(dir, "m", { mirrorOf: "bounce-left" })).err).toMatch(/mirrorOf 'bounce-left' is itself a mirror of bounce/);
+
+        // The other way round: bounce is what bounce-left flips, so bounce
+        // turned into a mirror of hop would leave bounce-left a mirror of a
+        // mirror.
+        projectJson(dir, "add-motion", "--id", "hop", "--rows", "2", "--cols", "2", "--fps", "8", "--direction", "left");
+        expect(register(dir, "hop", spriteRun(dir, "hop")).code).toBe(0);
+        const before = readProject(dir);
+        const twice = register(dir, "bounce", {
+          ...JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8")), source: "mirror", mirrorOf: "hop",
+        });
+        expect(twice.code).toBe(1);
+        expect(twice.err).toMatch(/'bounce' is the source of bounce-left — a mirror of it would then mirror a mirror/);
+        expect(readProject(dir)).toEqual(before);
+      });
+
+      test("an asymmetric character is mirrored only by a summary that says it was forced", () => {
+        const dir = readyBounce();
+        projectJson(dir, "set-character", "--asymmetric", "Scar over the left eye.");
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        const refused = register(dir, "bounce-left", mirrorRun(dir, "bounce-left"));
+        expect(refused.code).toBe(1);
+        expect(refused.err).toMatch(/Mini is asymmetric \("Scar over the left eye\."\) — .*--force.*force: true/);
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left", { force: "yes" })).code).toBe(1);
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left", { force: true })).code).toBe(0);
+        // Without the lock nothing is asked.
+        projectJson(dir, "set-character", "--asymmetric", "");
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left")).code).toBe(0);
+      });
+
+      test("show names a mirror whose source is gone or has another frame count; turning or removing the source notes it", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left"), "--at", String(T2)).code).toBe(0);
+
+        // Turning the source: the mirror no longer necessarily faces away.
+        const turned = project(dir, "set-motion", "--motion", "bounce", "--direction", "left", "--json");
+        expect(turned.code).toBe(0);
+        expect(turned.err).toMatch(/note: bounce-left mirrors bounce and faces left — check it still faces the other side/);
+        projectJson(dir, "set-motion", "--motion", "bounce", "--direction", "right");
+
+        // Three frames where the mirror has four.
+        const base = JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8"));
+        expect(register(dir, "bounce", { ...base, frames: base.frames.slice(0, 3) }, "--at", String(T2 + 1000)).code).toBe(0);
+        expect(projectJson(dir, "show").staleMirrors).toEqual([
+          { id: "bounce-left", mirrorOf: "bounce", reason: "bounce has 3 frames and this mirror 4" },
+        ]);
+
+        const removed = project(dir, "remove-motion", "--motion", "bounce", "--json");
+        expect(removed.code).toBe(0);
+        expect(removed.err).toMatch(/note: bounce-left was a mirror of bounce; its frames stay, but there is nothing to mirror it from again/);
+        expect(projectJson(dir, "show").staleMirrors).toEqual([
+          { id: "bounce-left", mirrorOf: "bounce", reason: "its source 'bounce' is gone" },
+        ]);
+        // No command to offer for a source that is gone: nothing is left to flip.
+        expect(project(dir, "show").out).toContain("stale mirror: bounce-left (of bounce) — its source 'bounce' is gone; there is nothing to mirror it from again");
+      });
+
+      test("a mirror cannot be turned to face its source's side, and a sheet run drops mirrorOf", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "bounce-left", mirrorRun(dir, "bounce-left")).code).toBe(0);
+        expect(project(dir, "set-motion", "--motion", "bounce-left", "--direction", "right").err)
+          .toMatch(/is a mirror of bounce, which faces right — it faces left/);
+        const sheet = JSON.parse(register(dir, "bounce-left", spriteRun(dir, "bounce-left")).out);
+        expect(sheet.source).toBe("sheet");
+        expect("mirrorOf" in sheet).toBe(false);
+      });
+    });
+
+    /**
+     * The 2026-09-27 amendment round: the mirror plays on its source's grid
+     * (R3 M1), an asymmetric second side has a way to be drawn (R3 M2), its
+     * sheet prompt carries the side geometry and the first side's sheet for
+     * rhythm (G1, G4), every run brings its grid and rate (K5), and a
+     * breathe says when its still has moved on (R3).
+     */
+    describe("sides, mirrors and what a run brings", () => {
+      /** A ready right-facing `walk-right` with its drawn sheet on disk,
+       *  from bounce's files. */
+      function readyWalkRight(dir: string) {
+        projectJson(dir, "add-motion", "--id", "walk-right", "--label", "Walk · right", "--rows", "2", "--cols", "2",
+          "--fps", "8", "--loop", "--direction", "right");
+        cpSync(join(dir, "motions", "bounce", "sheet-raw.png"), join(dir, "motions", "walk-right-sheet-raw.png"));
+        mkdirSync(join(dir, "motions", "walk-right"), { recursive: true });
+        cpSync(join(dir, "motions", "bounce", "sheet-raw.png"), join(dir, "motions", "walk-right", "sheet-raw.png"));
+        projectJson(dir, "set-sheet", "--motion", "walk-right", "--file", "motions/walk-right/sheet-raw.png", "--from", "ref-portrait");
+        expect(register(dir, "walk-right", spriteRun(dir, "walk-right"), "--at", String(T1)).code).toBe(0);
+      }
+
+      test("a mirror needs no grid or rate of its own and plays on its source's: a looping idle stays a loop", () => {
+        const dir = readyBounce();
+        // The source runs at 12 fps, looping, on its 2x2.
+        projectJson(dir, "set-motion", "--motion", "bounce", "--fps", "12");
+        const planned = projectJson(dir, "add-motion", "--id", "bounce-left", "--source", "mirror", "--direction", "left");
+        expect(planned).toMatchObject({ source: "mirror", grid: { rows: 1, cols: 1 }, fps: 8, loop: false, status: "planned" });
+        // The summary as `mirror` wrote it before it carried a grid: the
+        // grid is read off the source; timing, loop and anchor off the run.
+        const { grid: _grid, ...noGrid } = mirrorFlip(dir, "bounce-left", { fps: 12, loop: true, anchor: "bottom" });
+        const motion = JSON.parse(register(dir, "bounce-left", noGrid).out);
+        expect({ grid: motion.grid, fps: motion.fps, loop: motion.loop, anchor: motion.anchor })
+          .toEqual({ grid: { rows: 2, cols: 2 }, fps: 12, loop: true, anchor: "bottom" });
+        // A summary that says nothing at all is read off the source whole.
+        projectJson(dir, "set-motion", "--motion", "bounce-left", "--no-loop", "--fps", "3", "--anchor", "center");
+        const bare = mirrorFlip(dir, "bounce-left");
+        for (const key of ["grid", "fps", "loop", "anchor"]) delete (bare as Record<string, unknown>)[key];
+        const again = JSON.parse(register(dir, "bounce-left", bare).out);
+        expect({ grid: again.grid, fps: again.fps, loop: again.loop, anchor: again.anchor })
+          .toEqual({ grid: { rows: 2, cols: 2 }, fps: 12, loop: true, anchor: "bottom" });
+        // The run's word wins where it gives one.
+        const said = JSON.parse(register(dir, "bounce-left", mirrorFlip(dir, "bounce-left", { grid: { rows: 1, cols: 4 }, fps: 6 })).out);
+        expect({ grid: said.grid, fps: said.fps }).toEqual({ grid: { rows: 1, cols: 4 }, fps: 6 });
+      });
+
+      test.skipIf(!HAS_LIBWEBP)("the real mirror of a real run registers on its source's grid, rate and loop", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--source", "mirror");
+        const flipped = run(SHEET, ["mirror", join(dir, "motions", "bounce"), "--name", "bounce-left", "--json"]);
+        expect(flipped.code).toBe(0);
+        const motion = JSON.parse(register(dir, "bounce-left", JSON.parse(flipped.out)).out);
+        expect({ grid: motion.grid, fps: motion.fps, loop: motion.loop, direction: motion.direction })
+          .toEqual({ grid: { rows: 2, cols: 2 }, fps: 8, loop: true, direction: "left" });
+      });
+
+      test("an asymmetric second side goes from refused mirror to a drawn sheet without remove-motion", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "set-character", "--asymmetric", "The basket hangs on her right arm.");
+        readyWalkRight(dir);
+        projectJson(dir, "add-motion", "--id", "walk-left", "--label", "Walk · left", "--source", "mirror", "--direction", "left");
+        // 1. The flip is refused, saying the sentence back.
+        const flip = run(SHEET, ["mirror", join(dir, "motions", "walk-right"), "--name", "walk-left", "--json"]);
+        expect(flip.code).toBe(1);
+        expect(flip.err).toMatch(/is asymmetric: "The basket hangs on her right arm\." — flipping walk-right/);
+        // 2. The planned mirror cannot take a sheet prompt, and says what can.
+        const before = readFileSync(join(dir, "project.json"), "utf-8");
+        const refused = project(dir, "sheet-prompt", "--motion", "walk-left", "--action", "A walk.");
+        expect(refused.code).toBe(1);
+        expect(refused.err).toMatch(/set-motion --motion walk-left --source sheet, then sheet-prompt/);
+        expect(project(dir, "set-motion", "--motion", "walk-left", "--prompt", "x", "--prompt-parts",
+          JSON.stringify({ builder: "sheet-prompt/2", action: "A walk.", guards: ["state:walk", "loop-close"] })).err)
+          .toMatch(/--prompt-parts: 'walk-left' is a mirror motion .*--source sheet first/);
+        expect(readFileSync(join(dir, "project.json"), "utf-8")).toBe(before);
+        // 3. Said again: this side is drawn. What the mirror would have
+        //    brought (grid, rate, loop) is named as placeholders.
+        const switched = project(dir, "set-motion", "--motion", "walk-left", "--source", "sheet", "--json");
+        expect(switched.code).toBe(0);
+        expect(JSON.parse(switched.out).source).toBe("sheet");
+        expect(switched.err).toMatch(/note: walk-left was planned as a mirror, whose run brings the grid, the rate and the loop — sheet-prompt --frames <n> draws the grid; the 8 fps and loop=false here are placeholders: set-motion --fps <n> --loop\|--no-loop/);
+        // A one-frame placeholder is no sheet to draw.
+        expect(project(dir, "sheet-prompt", "--motion", "walk-left", "--action", "A walk.").err).toMatch(/is planned as 1x1 — one frame is a still, not a sheet\. .*--frames/);
+        const timed = project(dir, "set-motion", "--motion", "walk-left", "--fps", "10", "--loop", "--json");
+        expect(JSON.parse(timed.out)).toMatchObject({ fps: 10, loop: true });
+        // 4. Its prompt locks the sides for facing left and attaches the
+        //    finished right side's sheet last, for rhythm only.
+        const built = projectJson(dir, "sheet-prompt", "--motion", "walk-left", "--action", "Contact, down, pass, up.", "--frames", "4");
+        expect(built.promptParts.guards).toEqual(["direction:left", "asymmetric", "rhythm:right", "state:walk", "row-continuity", "loop-close"]);
+        expect(built.prompt).toContain("The basket hangs on her right arm. Facing left, toward the left of the picture, the character's own right side is the far side");
+        expect(built.prompt).toContain("The last attached image is the finished right-facing sheet of this same motion, for rhythm only");
+        expect(built.rhythm).toEqual({ motion: "walk-right", direction: "right", file: join(dir, "motions/walk-right/sheet-raw.png") });
+        expect(built.attach).toEqual([join(dir, "refs/portrait.png"), join(dir, "motions/walk-right/sheet-raw.png")]);
+        // With the guide: the rhythm sheet, then the guide, last.
+        const guided = projectJson(dir, "sheet-prompt", "--motion", "walk-left", "--action", "Contact, down, pass, up.", "--guide");
+        expect(guided.attach.slice(-2)).toEqual([join(dir, "motions/walk-right/sheet-raw.png"), join(dir, "motions/walk-left/layout-guide.png")]);
+        expect(guided.prompt).toContain("The second-to-last attached image, just before the layout guide, is the finished right-facing sheet");
+        // The human form says which file is the rhythm and where the sides fall.
+        const human = project(dir, "sheet-prompt", "--motion", "walk-left", "--action", "Contact, down, pass, up.");
+        expect(human.err).toMatch(/rhythm: .*walk-right\/sheet-raw\.png is walk-right's finished sheet, attached for its timing only/);
+        expect(human.err).toMatch(/sides: Facing left, toward the left of the picture, the character's own right side is the far side/);
+        // A motion with frames keeps the source that made them.
+        expect(project(dir, "set-motion", "--motion", "walk-right", "--source", "video").err)
+          .toMatch(/--source: 'walk-right' has 4 frames made by sheet — .*remove-motion --motion walk-right/);
+      });
+
+      test("no rhythm sheet without the lock, without a ready other side, or for a front view", () => {
+        const { dir } = seedMini();
+        readyWalkRight(dir);
+        projectJson(dir, "add-motion", "--id", "walk-left", "--rows", "2", "--cols", "2", "--fps", "8", "--loop", "--direction", "left");
+        projectJson(dir, "add-motion", "--id", "walk-front", "--rows", "2", "--cols", "2", "--fps", "8", "--loop", "--direction", "front");
+        const guards = (id: string) => projectJson(dir, "sheet-prompt", "--motion", id, "--action", "A walk.").promptParts.guards;
+        // Symmetric: the left side is a mirror's job, and nothing is attached.
+        expect(guards("walk-left")).not.toContain("rhythm:right");
+        projectJson(dir, "set-character", "--asymmetric", "The basket hangs on her right arm.");
+        expect(guards("walk-left")).toContain("rhythm:right");
+        expect(guards("walk-front")).toEqual(["direction:front", "asymmetric", "state:walk", "row-continuity", "loop-close"]);
+        // The other side not ready yet: nothing to take the rhythm from.
+        projectJson(dir, "set-motion", "--motion", "walk-right", "--status", "processing");
+        expect(guards("walk-left")).not.toContain("rhythm:right");
+      });
+
+      test("a file registered as two references is attached once", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "add-ref", "--id", "turnaround", "--file", "refs/portrait.png", "--role", "turnaround", "--uploaded");
+        projectJson(dir, "set-character", "--style", "flat vector blob, thick outline");
+        const built = projectJson(dir, "sheet-prompt", "--motion", "bounce", "--action", "A bounce.");
+        expect(built.attach).toEqual([join(dir, "refs/portrait.png")]);
+      });
+
+      test("an anchor of an asymmetric character is registered with where its sides fall", () => {
+        const { dir } = seedMini();
+        buildSheet(join(dir, "refs", "anchor-left.png"), { cell: 64, rows: 1, cols: 1 });
+        const plain = project(dir, "add-ref", "--id", "anchor-left", "--file", "refs/anchor-left.png", "--role", "anchor", "--direction", "left", "--uploaded", "--json");
+        expect(plain.err).not.toMatch(/asymmetric/);
+        projectJson(dir, "set-character", "--asymmetric", "The basket hangs on her right arm.");
+        const locked = project(dir, "add-ref", "--id", "anchor-left", "--file", "refs/anchor-left.png", "--role", "anchor", "--direction", "left", "--uploaded", "--json");
+        expect(locked.code).toBe(0);
+        expect(locked.err).toMatch(/note: Mini is asymmetric \("The basket hangs on her right arm\."\)\. Facing left, .*own right side is the far side.* Look at this anchor and check every side-specific detail sits on that side/);
+      });
+
+      test("every run brings its grid and its rate: a clip cut on other columns, a sheet at another fps", () => {
+        const { dir, realRun } = seedMini();
+        // A from-video summary: frames packed four across at 12 fps, over a
+        // motion planned as 2x2 at 8.
+        writeFileSync(join(dir, "motions", "bounce", "video-seedance-1.mp4"), "");
+        projectJson(dir, "add-video", "--motion", "bounce", "--file", "motions/bounce/video-seedance-1.mp4",
+          "--model", "seedance-2.5", "--mode", "i2v", "--at", String(T2));
+        const clip = { ...realRun, source: "video", video: join(dir, "motions", "bounce", "video-seedance-1.mp4"),
+          sampledAt: [0, 0.25, 0.5, 0.75], grid: { rows: 1, cols: 4 }, fps: 12 };
+        const cut = JSON.parse(register(dir, "bounce", clip).out);
+        expect({ grid: cut.grid, fps: cut.fps, loop: cut.loop }).toEqual({ grid: { rows: 1, cols: 4 }, fps: 12, loop: true });
+        // A sheet run sliced 2x2 at 10 fps.
+        const sheet = JSON.parse(register(dir, "bounce", { ...realRun, fps: 10 }).out);
+        expect({ grid: sheet.grid, fps: sheet.fps }).toEqual({ grid: { rows: 2, cols: 2 }, fps: 10 });
+        // A summary without either leaves the plan as it was.
+        const { grid: _g, fps: _f, ...silent } = realRun;
+        const kept = JSON.parse(register(dir, "bounce", silent).out);
+        expect({ grid: kept.grid, fps: kept.fps }).toEqual({ grid: { rows: 2, cols: 2 }, fps: 10 });
+      });
+
+      test("a breathe whose still is registered again says so, and show lists it until it is breathed again", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "idle", "--source", "breathe");
+        const summary = spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait.png", breathe: BREATHE });
+        expect(register(dir, "idle", summary, "--at", String(T2)).code).toBe(0);
+        expect("staleBreathes" in projectJson(dir, "show")).toBe(false);
+
+        const T3 = T2 + 1000;
+        buildSheet(join(dir, "refs", "portrait-2.png"), { cell: 64, rows: 1, cols: 1 });
+        const replaced = project(dir, "add-ref", "--id", "portrait", "--file", "refs/portrait-2.png", "--role", "portrait", "--uploaded", "--at", String(T3), "--json");
+        expect(replaced.code).toBe(0);
+        expect(replaced.err).toMatch(/note: idle was breathed from ref-portrait before this — it still shows that picture\. .*refs\/portrait-2\.png/);
+        expect(projectJson(dir, "show").staleBreathes).toEqual([
+          { id: "idle", still: "ref-portrait", reason: "ref-portrait was registered again after it was breathed" },
+        ]);
+        expect(project(dir, "show").out).toMatch(/stale breathe: idle \(of ref-portrait\) — ref-portrait was registered again after it was breathed; breathe it again and register it/);
+        expect(projectJson(dir, "show", "--motion", "idle").stale).toBe("ref-portrait was registered again after it was breathed");
+
+        const fresh = spriteRun(dir, "idle", { source: "breathe", still: "refs/portrait-2.png", breathe: BREATHE });
+        expect(register(dir, "idle", fresh, "--at", String(T3 + 1000)).code).toBe(0);
+        expect("staleBreathes" in projectJson(dir, "show")).toBe(false);
+      });
+
+      test("a re-run of a mirror's source names the mirror's own directory and command", () => {
+        const dir = readyBounce();
+        projectJson(dir, "add-motion", "--id", "bounce-left", "--source", "mirror");
+        expect(register(dir, "bounce-left", mirrorFlip(dir, "bounce-left"), "--at", String(T2)).code).toBe(0);
+        const again = run(PROJECT, ["register-run", "--dir", dir, "--motion", "bounce", "--run", join(FIXTURES, "bounce-run.json"), "--at", String(T2 + 1000), "--json"]);
+        expect(again.err).toContain("mirror it again from <character>/motions/bounce ('sprite-sheet.mjs mirror <character>/motions/bounce --name bounce-left')");
+      });
+
+      test("init records no facing for a picture brought to life", () => {
+        const dir = fresh();
+        const animate = projectJson(dir, "init", "--name", "Frog", "--purpose", "animate").character;
+        expect("facing" in animate).toBe(false);
+        const told = fresh();
+        expect(projectJson(told, "init", "--name", "Frog", "--purpose", "animate", "--facing", "left").character.facing).toBe("left");
+        const game = fresh();
+        expect(projectJson(game, "init", "--name", "Knight", "--purpose", "game").character.facing).toBe("right");
+      });
+    });
+
+    describe("the pixel palette", () => {
+      const palette = (dir: string, name: string, colors: string[]) => {
+        writeFileSync(join(dir, name), JSON.stringify({ colors }));
+        return name;
+      };
+
+      test("the first pixel run pins the palette on the character, derived from its frames", () => {
+        const { dir } = seedMini();
+        const summary = { ...JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8")), pixel: { palette: palette(dir, "palette.json", ["#000000", "#ffffff"]), colors: 2 } };
+        // Not declared pixel art: refused, with the declaration to make.
+        expect(register(dir, "bounce", summary).err).toMatch(/not declared pixel art — declare it first: set-character --pixel/);
+
+        projectJson(dir, "set-character", "--pixel", "32", "--colors", "16");
+        const r = register(dir, "bounce", summary, "--at", String(T2));
+        expect(r.code).toBe(0);
+        const doc = readProject(dir);
+        const id = `${basename(dir)}-palette`;
+        expect(doc.sprite.character.pixel).toEqual({ logicalHeight: 32, palette: id, colors: 2 });
+        const asset = doc.assets.find((a: any) => a.id === id);
+        expect(asset).toMatchObject({ type: "text", uri: "palette.json", status: "ready", createdAt: T2, metadata: { colors: 2 } });
+        expect(asset.metadata.sha256).toMatch(/^[0-9a-f]{64}$/);
+        const edge = doc.provenance.find((e: any) => e.toAssetId === id);
+        expect(edge.fromAssetId).toBe("bounce-frame-00");
+        expect(edge.operation.params).toMatchObject({ step: "palette", motion: "bounce", inputs: ["bounce-frame-00", "bounce-frame-01", "bounce-frame-02", "bounce-frame-03"] });
+
+        // Pinned once: the same file again changes nothing.
+        expect(register(dir, "bounce", summary, "--at", String(T2 + 5000)).code).toBe(0);
+        expect(readProject(dir).assets.find((a: any) => a.id === id).createdAt).toBe(T2);
+      });
+
+      test("a run quantised to another palette is refused unless --repin, which warns", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "set-character", "--pixel", "32");
+        const base = JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8"));
+        expect(register(dir, "bounce", { ...base, pixel: { palette: palette(dir, "palette.json", ["#000000"]) } }).code).toBe(0);
+        projectJson(dir, "add-motion", "--id", "hop", "--rows", "2", "--cols", "2", "--fps", "8");
+        expect(register(dir, "hop", { ...spriteRun(dir, "hop"), pixel: { palette: "palette.json" } }).code).toBe(0);
+
+        // Another file: re-run against the pinned one, or re-pin.
+        palette(dir, "other.json", ["#000000", "#00ff00"]);
+        const before = readProject(dir);
+        const other = register(dir, "hop", { ...spriteRun(dir, "hop"), pixel: { palette: "other.json" } });
+        expect(other.code).toBe(1);
+        expect(other.err).toMatch(/quantised to other\.json, not to the palette pinned for Mini \(palette\.json\).*--repin/);
+        // Same path, other bytes: the pinned palette itself changed — there
+        // is nothing left to re-run against, only re-pinning it.
+        palette(dir, "palette.json", ["#000000", "#ff0000"]);
+        const refused = register(dir, "hop", { ...spriteRun(dir, "hop"), pixel: { palette: "palette.json" } });
+        expect(refused.code).toBe(1);
+        expect(refused.err).toMatch(/palette\.json is the palette pinned for Mini, but the file changed since it was pinned — .*--repin/);
+        expect(refused.err).not.toMatch(/Re-run it against the pinned palette/);
+        expect(readProject(dir)).toEqual(before);
+
+        const repinned = register(dir, "hop", { ...spriteRun(dir, "hop"), pixel: { palette: "palette.json" } }, "--repin");
+        expect(repinned.code).toBe(0);
+        expect(repinned.err).toMatch(/WARN: re-pinned .*-palette to palette\.json — bounce was quantised to the old palette/);
+        expect(JSON.parse(repinned.out).warnings).toHaveLength(1);
+        const doc = readProject(dir);
+        expect(doc.provenance.find((e: any) => e.toAssetId === `${basename(dir)}-palette`).fromAssetId).toBe("hop-frame-00");
+      });
+
+      test("run --pixel's own report shape pins, { file, colors }", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "set-character", "--pixel", "32");
+        const base = JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8"));
+        const file = join(dir, "motions", "bounce", "palette.json");
+        writeFileSync(file, JSON.stringify({ kind: "pneuma-sprite-palette", version: 1, colors: ["#000000", "#ffffff", "#ff0000"] }));
+        const r = register(dir, "bounce", {
+          ...base,
+          pixel: { dir: join(dir, "motions", "bounce", "pixel"), scale: 1, pitch: { x: 8, y: 8 }, palette: { file, colors: 3, pinned: false, from: "motion" } },
+        });
+        expect(r.code).toBe(0);
+        const doc = readProject(dir);
+        expect(doc.sprite.character.pixel).toEqual({ logicalHeight: 32, palette: `${basename(dir)}-palette`, colors: 3 });
+        expect(doc.assets.find((a: any) => a.id === `${basename(dir)}-palette`).uri).toBe("motions/bounce/palette.json");
+        expect(register(dir, "bounce", { ...base, pixel: { palette: { colors: 3 } } }).err).toMatch(/pixel\.palette names no file/);
+      });
+
+      test("removing the motion that pinned the palette leaves no edge naming its frames", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "set-character", "--pixel", "32");
+        const base = JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8"));
+        expect(register(dir, "bounce", { ...base, pixel: { palette: palette(dir, "palette.json", ["#000000"]) } }).code).toBe(0);
+        projectJson(dir, "remove-motion", "--motion", "bounce");
+        const doc = readProject(dir);
+        const id = `${basename(dir)}-palette`;
+        expect(doc.assets.some((a: any) => a.id === id)).toBe(true);
+        const edge = doc.provenance.find((e: any) => e.toAssetId === id);
+        expect(edge.fromAssetId).toBeNull();
+        expect(edge.operation.params).toEqual({ tool: "sprite-sheet.mjs", step: "palette", motion: "bounce" });
+        // The invariant, over the whole file: every id an edge names exists.
+        const ids = new Set(doc.assets.map((a: any) => a.id));
+        for (const e of doc.provenance) {
+          if (e.fromAssetId !== null) expect(ids.has(e.fromAssetId)).toBe(true);
+          for (const input of e.operation?.params?.inputs ?? []) expect(ids.has(input)).toBe(true);
+        }
+      });
+
+      test("--no-pixel unregisters the pinned palette and leaves its file", () => {
+        const { dir } = seedMini();
+        projectJson(dir, "set-character", "--pixel", "32");
+        const base = JSON.parse(readFileSync(join(FIXTURES, "bounce-run.json"), "utf-8"));
+        expect(register(dir, "bounce", { ...base, pixel: { palette: palette(dir, "palette.json", ["#000000"]) } }).code).toBe(0);
+        const r = project(dir, "set-character", "--no-pixel", "--json");
+        expect(r.code).toBe(0);
+        expect(r.err).toMatch(/unregistered .*-palette.*palette\.json/);
+        const doc = readProject(dir);
+        expect(doc.assets.some((a: any) => a.id.endsWith("-palette"))).toBe(false);
+        expect(doc.provenance.some((e: any) => e.toAssetId.endsWith("-palette"))).toBe(false);
+        expect(existsSync(join(dir, "palette.json"))).toBe(true);
+      });
     });
   });
 

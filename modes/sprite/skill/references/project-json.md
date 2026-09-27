@@ -15,13 +15,18 @@ correctly on disk.
 ```
 <character>/                      # content set, kebab-case
   project.json
-  refs/<ref-id>.png               # turnaround, portrait, expressions…
+  refs/<ref-id>.png               # turnaround, portrait, expressions, one
+                                  # anchor per direction (anchor-back.png…)
   motions/<motion-id>/
     sheet-raw.png                 # as generated
     sheet-alpha.png               # background removed (only when raw had none)
     cells/00.png … NN.png         # raw sliced cells before alignment; kept so
                                   # `inspect` can measure clipping/jumps and
                                   # `align` can re-run from them
+    pixel/00.png … NN.png         # pixel art: the lattice's frames (`run
+                                  # --pixel`), a working file like cells/
+    palette.json                  # the palette a pixel run quantised to; the
+                                  # first one is pinned as <character>-palette
     frames/00.png … NN.png        # sliced + aligned, uniform cell, RGBA
     frames/align.json             # anchor point align used; the atlas pivot
                                   # is measured from it, not from the cell edge
@@ -35,12 +40,27 @@ correctly on disk.
       <motion-id>.mp4  .mov  .webm  .apng
       <motion-id>.json            # Lottie
       <motion-id>-frames.zip      # PNG sequence + animation.json
+      <motion-id>-aseprite.zip    # sheet + Aseprite JSON (+ shadow sheet)
+    variants/<name>/              # pixel art: one colourway (`recolor`)
+      frames/NN.png  frames/align.json   # the frames recoloured — no ids
+      sheet.png  atlas.json  preview.gif # the motion's layout, byte for byte
+  recolor.json                    # pixel art: the recolor map `recolor-palette`
+  recolor-swatches.png            # drafts and you fill in — working files, no ids
   exports/<character>.riv         # the whole character for Rive (`rive`)
+  exports/<character>-aseprite.zip  # every sprite motion on one Aseprite
+                                  # sheet (`export <character> --format aseprite`)
 ```
 
 `exports/` is written by `sprite-sheet.mjs export` / `rive` and nothing else;
 the files a run makes (previews, sheet, atlas — or a loop's four files below)
 stay where they are, with their names and ids, and are never copied into it.
+
+A **breathe motion** (route A) has no sheet of its own: `cells/` holds the
+bake (every frame cut to what all of them reach, plus the pad), then
+`frames/`, `sheet.png`, `atlas.json`, `preview.gif/.webp` and `inspect.json`
+as above. The still it was warped from is a reference in `refs/` —
+typically `refs/upload.png` as the user brought it and `refs/still.png`, the
+cut-out `fit` trimmed and sized — so re-running the motion never touches it.
 
 A **loop motion** (workflow E) has a different shape inside `motions/<id>/`:
 
@@ -128,8 +148,11 @@ video, a sheet generated from one reference) is fully described by
 | `<motion>-keyframe-alpha` | The same keyframe cut out, a `derive` edge (`step: "key"`) from it |
 | `<motion>-frame-NNN` | One frame of a loop — three digits, unaligned |
 | `<motion>-apng` (image) / `<motion>-webm` (video) / `<motion>-lottie` (text) | A loop's other three exports, made by its own run |
-| `<motion>-export-<format>` | An on-demand export of a ready motion, `format` one of `mp4` / `mov` / `webm` (video), `apng` (image), `lottie` (text), `png-seq` (image, `metadata.container: "zip"`). Written by `register-export` |
+| `<motion>-export-<format>` | An on-demand export of a ready motion, `format` one of `mp4` / `mov` / `webm` (video), `apng` (image), `lottie` (text), `png-seq` / `aseprite` (image, `metadata.container: "zip"`). Written by `register-export` |
 | `<character>-export-riv` | The character's `.riv` (image, `metadata.container: "riv"`); `<character>` is the directory name. Written by `register-export` |
+| `<character>-palette` | A pixel-art character's pinned palette (text, `palette.json`), `metadata: { colors?, size, sha256 }`; a `derive` edge (`step: "palette"`) from the frames of the run that pinned it. Written by `register-run` (see *Pixel art*) |
+| `<character>-export-aseprite` | Every ready sprite motion on one Aseprite sheet (image, `metadata.container: "zip"`). Written by `register-export` |
+| `<motion>-variant-<name>-sheet` / `-atlas` / `-gif` | One colourway of a pixel-art sprite motion: `variants/<name>/sheet.png` (image, `metadata: { width, height, substituted, unmatched, uncovered, size }` — the bake's counts), `atlas.json` (text) and `preview.gif`. Written by `register-recolor` (see *Colourways*) |
 
 Ids are stable across re-runs: `register-run` removes the previous frame
 assets and their edges before writing the new ones, so re-running a motion
@@ -161,10 +184,20 @@ wrote, from its `--json` report:
 - **`<motion>-export-<format>`** — `metadata`: `size`, and what the export
   measured: `width`, `height`, `fps`, `duration`, `frames` (the motion's frame
   count — a video holds `frames × repeat`), `repeat`, `scale`, `background` (MP4 only), `container` (`"zip"`
-  on a PNG sequence). One `derive` edge from the motion's frames:
+  on a PNG sequence and an Aseprite sheet), and `shadow` —
+  `{ squash, shear, opacity, blur, color }` — when it was made with
+  `--shadow` (cast into a video's frames; a shadow sheet beside an Aseprite
+  one). One `derive` edge from the motion's frames:
   `fromAssetId` is the first frame, `params: { tool: "sprite-sheet.mjs",
-  step: "export", format, repeat, scale, background, inputs: [every frame] }`.
+  step: "export", format, repeat, scale, background, shadow, inputs: [every frame] }`.
   The sidecar names it as `motion.exports[format]`.
+- **`<character>-export-aseprite`** — every ready sprite motion on one
+  sheet, a frame tag each. `metadata`: `width` / `height` (the sheet),
+  `frames`, `motionCount`, `scale`, `shadow` (as above), `container: "zip"`,
+  `size`. Filed like the `.riv`: its `derive` edge hangs off every registered
+  frame of every motion on it, `params: { tool, step: "export", format:
+  "aseprite", scale, shadow, motions: [ids in order], tags: [{ name, from,
+  to }], inputs }`, and the sidecar names it as `sprite.exports.aseprite`.
 - **`<character>-export-riv`** — `metadata`: `width` / `height` (the
   artboard), `frames` (the images it EMBEDS — a shared reverse adds none),
   `motionCount` (loops and sprite motions) and `transitionCount`, `images`
@@ -215,9 +248,9 @@ at. Re-registering replaces the asset and its edge in place.
 
 **Retirement.** An export is made of one set of frames. When `register-run`
 replaces a motion's frames it drops that motion's `<motion>-export-*` assets,
-their edges and their `motion.exports` entries — and the `.riv` too, when
-`params.motions` lists the motion (a transition included) — and says so on
-stderr; `remove-motion` does the same. Cutting a transition again also
+their edges and their `motion.exports` entries — and the `.riv` and the
+character's Aseprite sheet too, when their `params.motions` lists the motion
+(a transition included) — and says so on stderr; `remove-motion` does the same. Cutting a transition again also
 notes each reverse made from the old cut: its frames are still the old ones
 backwards, and `rive` stops sharing the source's images with it until it is
 cut again with `--reverse-of`. The files stay on disk (the paths are printed) and are simply
@@ -233,7 +266,12 @@ that drew it. `--uploaded` writes an `upload` edge with `actor: "human"`,
 brought has no model and no prompt to record, and inventing one is the only
 other way to get it into the project. `--derived-from <refId>` writes a
 `derive` edge from that reference carrying `params.op` (`--op`, default
-`crop`) — the single pose you cut out of an uploaded sheet. The asset entry is
+`crop`) — the single pose you cut out of an uploaded sheet. It also takes a
+ref's asset id or any registered asset id, such as a frame
+(`--derived-from walk-right-frame-00`): an anchor is often cut out of a frame.
+If that motion is run again the frame's id is reused for the new picture; if
+the frame is dropped, the edge's parent is nulled like any edge whose parent
+goes. The asset entry is
 identical in all three cases (`tags: ["ref"]`, measured metadata, `ready`), and
 re-registering an id replaces its edge whatever its type, so a reference can
 move between origins without collecting duplicates. `show` reports the result
@@ -252,22 +290,69 @@ interface SpriteSidecar {
     description: string;          // one paragraph you keep current
     style: string;                // the style anchor that opens every prompt
     cell: { width: number; height: number };
-    facing?: "left" | "right";
+    facing?: "left" | "right";    // the side that is generated; the other
+                                  // side is a `mirror` of it. `init` writes
+                                  // right unless told, except for purpose
+                                  // animate (a picture faces as drawn)
+    purpose?: "game" | "loop" | "mascot" | "animate";
+                                  // what the user is making (the route):
+                                  // `init --purpose` / `set-character
+                                  // --purpose`. Absent = never recorded
+    pixel?: {                     // present only for pixel art — the one
+      logicalHeight: number;      // authority for it. The character's height
+                                  // in logical px (`--pixel`)
+      palette?: string;           // `<character>-palette`, pinned by the
+                                  // first pixel run; absent until then
+      colors?: number;            // the size asked for (`--colors`), then
+                                  // the size it was pinned with — the
+                                  // default `--palette-size` of every
+                                  // `run --pixel` (else 48)
+      variants?: Array<{          // its colourways, recorded once
+        name: string;             // a slug: "red-team"
+        map: Record<string, string>;  // "#src" → "#dst", lower-case, in
+                                  // the order a tolerance tie goes by
+        tolerance?: number;       // 1–255; absent = exact (0 is accepted
+                                  // as exact and not stored)
+      }>;                         // (`register-recolor`; see *Colourways*)
+    };
+    asymmetric?: string;          // one sentence: what must never flip ("the
+                                  // sword is in the right hand"). Stops a
+                                  // mirror; guards every built prompt
   };
   refs: Array<{ id: string; asset: string;
-                role: "turnaround" | "portrait" | "expression" | "custom";
-                label: string }>;
+                role: "turnaround" | "portrait" | "expression" | "anchor" | "custom";
+                label: string;
+                direction?: "front" | "back" | "left" | "right" }>;
+                                  // `direction` exactly on an anchor: one
+                                  // single-pose image facing one way, one per
+                                  // direction. The character's directions are
+                                  // its anchors' directions
   motions: Motion[];
-  exports?: { riv?: string };     // `<character>-export-riv`, the whole
-                                  // character for Rive, loops resampled.
-                                  // Absent until one is registered; absent
-                                  // in every 0.3.x file
+  exports?: { riv?: string; aseprite?: string };
+                                  // `<character>-export-riv`, the whole
+                                  // character for Rive, loops resampled;
+                                  // `<character>-export-aseprite`, its sprite
+                                  // motions on one Aseprite sheet. Each absent
+                                  // until registered; absent in every 0.3.x file
 }
 
 interface Motion {
   id: string; label: string;
+  direction?: "front" | "back" | "left" | "right";
+                                  // the way it faces; the id is then
+                                  // <state>-<direction> (walk-left), so every
+                                  // atlas key, Aseprite tag and Rive input
+                                  // carries it (`add-motion/set-motion
+                                  // --direction`)
   prompt: string;                 // the sheet prompt actually sent
+  promptParts?: PromptParts;      // present when code built `prompt`
+                                  // (`sheet-prompt`); absent = hand-written
   grid: { rows: number; cols: number };
+                                  // planned by add-motion / sheet-prompt;
+                                  // register-run sets it (and fps) from the
+                                  // run that lands — the grid the sheet was
+                                  // sliced on, the columns a clip's frames
+                                  // were packed on
   fps: number; loop: boolean;
   anchor: "bottom" | "center";
   status: "planned" | "generating" | "processing" | "ready" | "failed";
@@ -277,9 +362,17 @@ interface Motion {
   gif?: string; webp?: string;
   videos: MotionVideo[];
   inspect?: InspectSummary;       // copied from inspect.json by register-run
-  source?: "sheet" | "video";     // how the frames were obtained; absent means
-                                  // "sheet" (set by add-motion --source and by
-                                  // register-run for a from-video run)
+  source?: "sheet" | "video" | "breathe" | "mirror";
+                                  // how the frames were obtained; absent means
+                                  // "sheet" (set by add-motion --source, and
+                                  // corrected by register-run from the run)
+  mirrorOf?: string;              // source "mirror" only: the motion whose
+                                  // frames these are, flipped
+  breathe?: BreatheRecord;        // source "breathe" only: what the warp was
+                                  // made from and with
+  slice?: SliceRecord;            // sheet motions only: present when run
+                                  // sliced the sheet by its poses' ink;
+                                  // absent = the fixed grid
   kind?: "loop" | "transition";   // what the motion is FOR; absent = a sprite
                                   // motion. `source` still says how the frames
                                   // were obtained ("video" for both). An
@@ -302,10 +395,14 @@ interface Motion {
                                   // written by `register-export`
   keyframe?: string;              // asset id, `<motion>-keyframe`
   keyframeAlpha?: string;         // asset id, `<motion>-keyframe-alpha`
+  variants?: Record<string, {     // pixel art, sprite motions only: each
+    sheet: string; atlas: string; // colourway's files, by colourway name —
+    gif?: string;                 // `<motion>-variant-<name>-sheet` …
+  }>;
   exports?: {                     // export format → asset id. The WebP, GIF
                                   // and sheet stay in their own fields
     mp4?: string; mov?: string; webm?: string;
-    apng?: string; lottie?: string; "png-seq"?: string;
+    apng?: string; lottie?: string; "png-seq"?: string; aseprite?: string;
   };                              // A loop's own run fills apng / webm /
                                   // lottie with `<motion>-apng` … — exactly
                                   // what 0.3.x stored here, so an older file
@@ -322,6 +419,51 @@ interface LoopBrief {
                                   // from a ceiling of 0
   recordedAt: string;             // ISO timestamp of the set-motion call
 }
+
+interface BreatheRecord {         // all required but anatomy
+  still: string;                  // asset id of the reference warped from
+  depth: number;                  // total stretch, share of the body below the neck
+  breaths: number;                // whole breaths per loop of the motion
+  lag: number;                    // how far the head trails the chest
+  mode: "smooth" | "pixel";       // resampled, or whole pixels
+  anatomy?: { rigidRow: number; axisX: number; from: "detected" | "override";
+              torsoHalf?: number };
+                                  // the boundary actually used, in the still's
+                                  // pixels — what to change (--rigid-row) when
+                                  // the head wobbles; torsoHalf only when a
+                                  // manual --torso band was given
+  headOffset?: { min: number; max: number; travel: number;
+                 highest: number[]; lowest: number[] };
+                                  // where the head rode (image y, negative is
+                                  // up), from the top of the breathe summary;
+                                  // absent on a breathe registered before it
+                                  // was reported
+}
+
+interface SliceRecord {
+  mode: "auto";
+  reason: "asked" | "grid-clipped";
+  gridClipped?: number[];         // the cells the fixed grid would have cut
+  forced: { rows: boolean; cols: boolean[] };
+                                  // a count the ink did not give, forced
+  clipped: Array<{ index: number; why: "sheet-edge" | "cut" }>;
+                                  // poses clipped anyway
+}
+// register-run keeps this much of run's slice block; the cut lines, the grown
+// cell and the pose boxes stay in the run summary and cells/slice.json. A run
+// cut on the fixed grid drops it, and so does `set-motion --source` away from
+// sheet.
+
+interface PromptParts {           // how `sheet-prompt` built `prompt`
+  builder: string;                // code version, e.g. "sheet-prompt/2"
+  action: string;                 // your action / phase plan, verbatim
+  guards: string[];               // clause ids: "state:walk", "direction:left",
+                                  // "row-continuity", "loop-close", "guide"…
+  guide?: { rows: number; cols: number;
+            cell: { width: number; height: number };
+            safeMargin: { x: number; y: number } };
+                                  // the layout guide it was sent with
+}                                 // same builder + parts ⇒ same text
 
 interface TransitionBrief {       // a transition's two answers, both required
   duration: number;               // seconds it plays in the .riv — the take
@@ -369,18 +511,43 @@ interface InspectSummary {
                                             // when the report carried no finite
                                             // number; 0 is a real reading, not
                                             // an absence
+  headDrift?: number;                       // std-dev in px of the head-and-
+                                            // torso x, each frame's top band
+                                            // registered against frame 00's —
+                                            // what a feet-pinned walk lurches
+                                            // with. Same absent rule
+  sourceHeadDrift?: number;                 // the same band on the pre-align
+                                            // cells, straight-line drift
+                                            // removed: the bar headDrift is
+                                            // judged against. Absent without
+                                            // cells
+  nearDuplicates?: Array<[number, number]>; // neighbour pairs whose step
+                                            // (mean RGBA diff at 64²) is under
+                                            // 0.01; [last, 0] is a loop's wrap.
+                                            // [] = checked, none; absent =
+                                            // never checked
+  rowJumps?: Array<[number, number]>;       // grid row boundaries whose step
+                                            // jumps past the in-row median;
+                                            // same absent-versus-[] rule
   maxJump: number;                          // largest step between neighbours
   scaleDrift: number;                       // (max h − min h) / mean
   emptyFrames: number[];
   seam?: number;                            // loop only: how far the last frame
                                             // is from the first, in the same
-                                            // silhouette-diff units as `step`
+                                            // units as `step` — premultiplied
+                                            // RGBA difference since `loop`
+                                            // measured colour, silhouette diff
+                                            // before
   step?: number;                            // loop only: the median frame-to-
-                                            // frame change. `seam <= 2 * step`
-                                            // is a loop that closes — the one
-                                            // rule, the same in SKILL.md step
-                                            // 10, `pipeline.md` and the
-                                            // viewer's SEAM_STEP_FACTOR
+                                            // frame change
+  seamLimit?: number;                       // loop only: the bar `seam` was
+                                            // judged against, max(2 * step,
+                                            // 0.005). `seam <= seamLimit` is a
+                                            // loop that closes — the one rule,
+                                            // read by `pipeline.md`'s warning,
+                                            // `sprite-project.mjs show` and the
+                                            // viewer. Absent on an older loop:
+                                            // its rule was `seam <= 2 * step`
   seamFill?: number;                        // loop only: in-between frames
                                             // `loop --seam-fill` inserted at
                                             // the wrap, after which `seam` is
@@ -389,9 +556,40 @@ interface InspectSummary {
   alphaCoverage?: number;                   // loop only: fraction of the frame
                                             // area that is opaque, averaged
                                             // over the frames
-                                            // All four are absent unless the
+                                            // Each is absent unless the
                                             // report carried finite numbers —
                                             // 0 is a reading, not an absence
+  keyResidue?: number;                      // share of the visible pixels that
+                                            // still carry the chroma plate's
+                                            // hue (a fringe the key left, or
+                                            // colour the character has); warns
+                                            // above 0.005. Present only on a
+                                            // motion keyed off a hued plate —
+                                            // absent for white plates, mattes
+                                            // and provided alpha; 0 is clean.
+                                            // (`keyFringe` stays in
+                                            // inspect.json)
+  lift?: Array<number | null>;              // --y-from cell only: px each
+                                            // frame's feet stand above the
+                                            // ground, null for an empty frame;
+                                            // all zeros = no drawn height.
+                                            // Whole or absent
+  pixel?: {                                 // frames that went through `pixel`
+    pitch: { x: number; y: number };        // source px per logical px it cut at
+    scale: number;                          // the whole-number upscale written
+    held: boolean;                          // alpha only 0/255, every scale×scale
+                                            // block one colour and, when
+                                            // paletteChecked, every colour in the
+                                            // pinned palette; false names the frames
+    paletteChecked: boolean;                // false after --outline (it darkens the
+                                            // edge on purpose) or with no palette
+    softAlphaFrames?: number[];             // each only when some frame broke the
+    offGridFrames?: number[];               // lattice that way
+    offPaletteFrames?: number[];
+  };                                        // the four facts whole or absent; the
+                                            // palette's path stays in the run
+                                            // summary (character.pixel.palette
+                                            // names the pinned one)
   crop?: { x: number; y: number; w: number; h: number };
                                             // loop and transition: the rect
                                             // every frame was cut from, in
@@ -475,6 +673,175 @@ answering none of the question. `add-video` and `show` say which answers are
 missing rather than reading half a record out loud. A sprite motion never
 carries one; the loader drops it there the way it drops every other loop-only
 field.
+
+### Routes, directions, breathe, mirror, pixel art (0.5.0)
+
+Every one of these fields is optional and absent in a 0.4.x file, which
+loads — and is rewritten by any command — byte for byte as before. The viewer
+drops a value it does not recognise rather than defaulting it: an unknown
+`purpose`, `source` or `direction` is absent; `breathe` travels only with
+`source: "breathe"` and `mirrorOf` only with `source: "mirror"`; `breathe`,
+`promptParts` and `pixel` are whole or absent (a `pixel` without its
+`logicalHeight` is no pixel spec); an anchor without a direction loads as a
+`custom` ref, and no other role keeps one.
+
+**The character.** `init --purpose --asymmetric --pixel <h> [--colors N]`
+records them at creation; `set-character` changes any of them later, along
+with `--description`, `--style` and `--facing` — only the flags given change.
+`--asymmetric ""` takes the sentence back; `--no-pixel` removes the pixel
+spec and unregisters a pinned palette (the file stays).
+
+**Directions.** A character's direction set is read off its anchors
+(`add-ref --role anchor --direction left`, one anchor per direction — a
+second one for the same direction is refused; re-register that id to replace
+it). A motion faces one way (`add-motion --direction`, `set-motion
+--direction`) and is named `<state>-<direction>`. `facing` stays the side
+that is generated; the other side is mirrored (or drawn, on an asymmetric
+character: `set-motion --source sheet` turns a planned mirror into a sheet).
+
+**A breathe motion** is registered from `sprite-sheet.mjs breathe --name
+<id> --json` (usually piped straight into `register-run --run -`), whose
+summary is a sprite run's (frames, sheet, atlas, GIF, inspect, grid, fps)
+plus `source: "breathe"`, `still` (the image's path) and `breathe: { depth,
+breaths, lag, mode, anatomy? }`. `register-run` finds the still by
+its uri among the registered **references** and refuses one that is not there —
+`add-ref --uploaded` it first (a cut-out: `--derived-from <ref> --op key`;
+an upload that was already transparent and only fitted: `--op fit`), so
+provenance reads frames ← alpha still ← upload. Any other asset is refused as
+a still: a motion's frame is replaced or removed with its motion and would
+leave `breathe.still` dangling (copy it under `refs/` and `add-ref
+--derived-from <frame id>` — the refusal names the frame), and a preview or a
+sheet is not one picture of the character. Each frame is a `derive`
+edge from the still, `params: { tool, step: "breathe", frameIndex, depth,
+breaths, lag, mode }`, and `motion.breathe` keeps the record, with the run's
+top-level `headOffset` as `breathe.headOffset` (`show --motion` prints it
+under the breathe line). A
+breathe is drawn on no grid and timed by its run: `add-motion --source
+breathe` needs no `--rows/--cols` and no `--fps` (1×1 at 8 fps until the
+run lands), and
+`register-run` sets `motion.grid` to the atlas the run packed, `motion.fps`
+to the run's rate and `loop: true`. Re-registering after a re-run with other
+parameters rewrites the frames, their edges and the record in place and
+drops the old tail. Registering the still's reference again (`add-ref` over
+the same id, usually with a new file) leaves the breathe showing the old
+picture: `add-ref` says so on stderr, and `show` lists it under
+`staleBreathes` (`{ id, still, reason }`; `show --motion` as `stale`) until
+it is breathed again and registered — a note, not a status, like a stale
+mirror.
+
+**A mirror** is registered from `sprite-sheet.mjs mirror --json`: a sprite
+run plus `source: "mirror"`, `mirrorOf` and — when `mirror --force` flipped an
+asymmetric character — `force: true`. The source must be a ready sprite
+motion (not a loop, a transition or another mirror) facing `left` or
+`right`, with as many registered frames as the run; frame i derives from its
+frame i (`step: "mirror"`). The motion it lands on must not itself be the
+source of another mirror (that one would become a mirror of a mirror), and on
+a character with `asymmetric` set a summary without `force: true` is refused,
+the same lock `mirror` applies. `motion.mirrorOf` names it and `motion.direction`
+becomes the other side (a mirror declared facing the same side is refused,
+and `set-motion --direction` cannot turn it later). A mirror plays exactly as
+its source does: `add-motion --source mirror` needs no `--rows/--cols/--fps`
+(1×1 at 8 fps until the run lands), and `register-run` sets its `grid`,
+`fps`, `loop` and `anchor` from the summary, reading the source motion for
+whichever the summary leaves out. Re-running the source
+prints a note per mirror made from it, and `show` lists each mirror whose
+source was registered again after it — or is gone — under `staleMirrors` (a
+note, not a status: the fix is one free `mirror` + `register-run`). `show`
+names the command (`sprite-sheet.mjs mirror <character>/motions/<source>
+--name <mirror>`); when the source is gone it says there is nothing to mirror
+it from again.
+
+A run of any other shape over a breathe or mirror motion drops that record
+and corrects `source`, the way a sheet run corrects `video`.
+
+**Recorded prompt parts.** `sheet-prompt --motion <id> --action "…"` builds
+the sheet prompt and records both (`prompting.md`, *Building the prompt*);
+`set-motion --prompt "<text>" --prompt-parts '<json>'` is the same writer
+exposed. Both go on together; `--prompt` alone is a hand-written prompt and
+drops any parts on file. `guards` lists only the conditional clauses
+(`pixel:<h>`, `guide`, `direction:<d>`, `anchor:<d>`, `asymmetric`,
+`rhythm:<d>`, `state:<s>`, `row-continuity`, `loop-close` /
+`one-shot-end`); what every sheet prompt says is pinned by the builder
+version. `sheet-prompt/2` (2026-09-27) added two things to `/1`'s text: an
+asymmetric character's prompt says where the character's own right and left
+fall for the facing it states (the motion's direction, else
+`character.facing` — `sheet-prompt.mjs` `SIDE_GEOMETRY`, printed whole as
+`sides` by `sheet-prompt --json`), and `rhythm:<d>` — the finished
+`<d>`-facing sheet of the same motion, attached for its timing only when an
+asymmetric character's other side had to be drawn. A prompt with neither is
+`/1`'s text word for word; `/1` records stay as they were written. The
+attach order `sheet-prompt` prints is the order the text names them by: the
+direction's anchor, the other references (a file registered twice goes
+once), the rhythm sheet, the layout guide — the last two named by their
+place from the end. With the same character
+and grid, the same parts render the same text. Parts describe a sheet:
+`sheet-prompt` refuses a breathe or a mirror motion (and `set-motion
+--prompt-parts` refuses to record parts on one), a breathe or mirror run
+landing on a motion that had a built prompt drops the parts and the text
+they built (a prompt written by hand stays), and the viewer ignores parts
+beside `source: "breathe"` or `"mirror"`.
+
+**Re-planning a source.** `set-motion --source sheet|video|breathe|mirror`
+says again how a motion with no frames yet will get them — the way a planned
+mirror that an asymmetric character refuses becomes a drawn side (`--source
+sheet`, then `sheet-prompt`). Its `mirrorOf` / `breathe` record, if a
+hand-edited file had one, goes with the old source. A motion with frames
+keeps the source that made them; the run that replaces them corrects it.
+
+**Pixel art.** `character.pixel` is the one authority for "this is pixel
+art": `riveIsPixelArt` (`rive-plan.mjs`) reads it first and falls back to the
+style sentence for older characters, and the Export tab's Rive request names
+the image format it implies. A pixel run's summary
+carries `pixel: { palette: { file, colors, pinned, from }, … }` (what
+`sprite-sheet.mjs run --pixel` writes; a bare `palette: "<path>"` with
+`colors` beside it is accepted too); the first one `register-run` sees pins
+it as `<character>-palette` (the character must be declared pixel art
+first). A later run quantised to the same file and bytes changes nothing
+(`run --pixel` quantises to the pinned file when `--palette` is not given);
+one quantised to a different file, or to the pinned file after its bytes
+changed, is refused unless `--repin`, which pins the new one and warns that
+the other ready motions were quantised to the old one. Removing the motion
+that pinned it leaves the palette with no parent: `dropAssets` takes removed
+ids out of every surviving edge's `params.inputs` as well as its
+`fromAssetId`.
+
+Every pixel run is held to `logicalHeight` (`sprite-sheet.mjs pixel` /
+`run --pixel`): it stands in for a missing `--pitch-hint` when the frames
+back it, and a height the frames miss is a warning — never a squash. The run
+summary's `pixel.logicalHeight` says how it went; nothing of it is stored
+here.
+
+**Colourways.** A pixel-art character's colourways are recorded once, on
+`character.pixel.variants` — the swap itself (`{ name, map, tolerance? }`), so
+a later session knows what "red-team" is and a motion made again is baked
+with the same one (`sprite-sheet.mjs recolor` without `--map` reads it). Each
+sprite motion names only the files its bake left: `motion.variants[name] = {
+sheet, atlas, gif }`, the assets `<motion>-variant-<name>-*`, the sheet and
+preview derived from the motion's frames (`params: { tool, step: "recolor",
+variant, tolerance?, inputs }`), the atlas from the sheet (`step: "pack"`). The
+variant's frames under `variants/<name>/frames/` have no ids, like `cells/`.
+The Export tab lists one download row per colourway the motion has, in the
+character's order; nothing there asks for one — the colours are the
+agent's call.
+
+`register-recolor` is the only writer. The loader applies the same rules the
+writer checks with (`recolor.mjs`): a colourway with a bad name, a non-hex
+colour, an empty map or a tolerance outside 0–255 is dropped (0 is exact,
+the same as none, and is never stored), the first of a
+name wins, and an empty list is no list; a motion's entry needs a colourway
+name and its sheet and atlas ids, and only a sprite motion (no `kind`) keeps
+one. Lifecycle — the files stay on disk each time, only unregistered:
+`register-run` of a motion retires its colourway files (the frames they were
+baked from are gone) and `show` lists it under `variantsMissing` until it is
+recoloured; a colourway registered with a changed map retires the files other
+motions baked with the old one; `set-character --remove-variant <name>`
+drops a colourway and its files, `--no-pixel` all of them; `remove-motion`
+takes a motion's with it. A re-pin (`register-run --repin`) keeps the
+colourways but warns that their maps name the old palette's colours. Colourways
+are per motion, mirrors included: a mirror registered from a recoloured motion
+has none (and is listed under `variantsMissing`) until `recolor` runs on it,
+and re-running its source notes the stale mirror without touching the
+mirror's own colourway files — they go when the mirror is registered again.
 
 ## Character identity vs content set
 

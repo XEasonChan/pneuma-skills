@@ -24,6 +24,7 @@ import type { ViewerFileContent } from "../../../core/types/viewer-contract.js";
 import {
   CRAFT_PROJECT_SCHEMA,
   createCharacterProjectFile,
+  DIRECTIONS,
   EXPORT_FORMATS,
   findMotion,
   findRef,
@@ -32,7 +33,10 @@ import {
   MOTION_STATUSES,
   resolveAssetUri,
   saveRoster,
+  type BreatheRecord,
+  type SliceRecord,
 } from "../domain.js";
+import { riveDefaultImages, riveIsPixelArt } from "../skill/scripts/rive-plan.mjs";
 
 const MINI = readFileSync(
   join(import.meta.dir, "fixtures", "mini", "project.json"),
@@ -269,6 +273,99 @@ describe("loadRoster", () => {
     expect(mini.frameCount).toBe(4);
   });
 
+  test("the head drift, its source bar and the step pairs survive; broken ones do not", () => {
+    // `headDrift` is the lurch `bodyDrift` cannot see after a feet pin, and
+    // `sourceHeadDrift` the bar it is judged against: both get `bodyDrift`'s
+    // finite-or-absent rule. The two pair lists keep `[]` — the check ran and
+    // found nothing — apart from "never checked", and drop only the entries
+    // that are not a pair of frame indices.
+    const withInspect = (patch: Record<string, unknown>) => {
+      const body = JSON.parse(MINI);
+      Object.assign(body.sprite.motions[0].inspect, patch);
+      return loadRoster(files({ "mini/project.json": JSON.stringify(body) }))!
+        .byContentSet.mini.sprite.motions[0].inspect!;
+    };
+
+    // The Lumi side walk after a feet pin, and its source.
+    const real = withInspect({
+      headDrift: 7.448, sourceHeadDrift: 0.765,
+      nearDuplicates: [[2, 3], [15, 0]], rowJumps: [[3, 4], [7, 8]],
+    });
+    expect({
+      headDrift: real.headDrift, sourceHeadDrift: real.sourceHeadDrift,
+      nearDuplicates: real.nearDuplicates, rowJumps: real.rowJumps,
+    }).toEqual({
+      headDrift: 7.448, sourceHeadDrift: 0.765,
+      nearDuplicates: [[2, 3], [15, 0]], rowJumps: [[3, 4], [7, 8]],
+    });
+
+    const none = withInspect({ headDrift: 0, nearDuplicates: [], rowJumps: [] });
+    expect({ headDrift: none.headDrift, nearDuplicates: none.nearDuplicates, rowJumps: none.rowJumps })
+      .toEqual({ headDrift: 0, nearDuplicates: [], rowJumps: [] });
+
+    const broken = withInspect({
+      headDrift: "7.4", sourceHeadDrift: Number.NaN,
+      nearDuplicates: [[1, 2], [3], [4, "5"], [-1, 0], [1.5, 2], "6-7", null],
+      rowJumps: "03→04",
+    });
+    expect({
+      head: "headDrift" in broken,
+      source: "sourceHeadDrift" in broken,
+      nearDuplicates: broken.nearDuplicates,
+      rowJumps: "rowJumps" in broken,
+    }).toEqual({ head: false, source: false, nearDuplicates: [[1, 2]], rowJumps: false });
+
+    const mini = loadRoster(files({ "mini/project.json": MINI }))!
+      .byContentSet.mini.sprite.motions[0].inspect!;
+    expect(["headDrift", "sourceHeadDrift", "nearDuplicates", "rowJumps"].filter((k) => k in mini)).toEqual([]);
+  });
+
+  test("a jump's lift survives whole, one reading per frame; anything else is absent", () => {
+    // `--y-from cell`: px above the ground per frame, null for an empty one.
+    // Its entries mean their frame, so a list of the wrong length or with a
+    // non-number in it is dropped whole, never repaired.
+    const withLift = (lift: unknown) => {
+      const body = JSON.parse(MINI);
+      body.sprite.motions[0].inspect.lift = lift;
+      return loadRoster(files({ "mini/project.json": JSON.stringify(body) }))!
+        .byContentSet.mini.sprite.motions[0].inspect!;
+    };
+    expect(withLift([0, 12.5, null, 3]).lift).toEqual([0, 12.5, null, 3]);
+    for (const broken of [[0, 12.5, null], [0, "12.5", null, 3], [0, [1], 2, 3], {}, "0,1,2,3"]) {
+      expect({ broken, present: "lift" in withLift(broken) }).toEqual({ broken, present: false });
+    }
+    const mini = loadRoster(files({ "mini/project.json": MINI }))!.byContentSet.mini.sprite.motions[0].inspect!;
+    expect("lift" in mini).toBe(false);
+  });
+
+  test("a pixel run's lattice check survives whole; its frame lists drop bad entries on their own", () => {
+    const withPixel = (pixel: unknown) => {
+      const body = JSON.parse(MINI);
+      body.sprite.motions[0].inspect.pixel = pixel;
+      return loadRoster(files({ "mini/project.json": JSON.stringify(body) }))!
+        .byContentSet.mini.sprite.motions[0].inspect!;
+    };
+    const pixel = {
+      pitch: { x: 8.0625, y: 8 }, scale: 2, held: false, paletteChecked: true,
+      softAlphaFrames: [1, 3], offGridFrames: [2], offPaletteFrames: [0],
+    };
+    expect(withPixel(pixel).pixel).toEqual(pixel);
+    expect(withPixel({ pitch: { x: 8, y: 8 }, scale: 1, held: true, paletteChecked: false }).pixel)
+      .toEqual({ pitch: { x: 8, y: 8 }, scale: 1, held: true, paletteChecked: false });
+    // A path a hand-edited file carries is not part of the check.
+    expect("palette" in withPixel({ ...pixel, palette: "/abs/palette.json" }).pixel!).toBe(false);
+    for (const broken of [
+      { ...pixel, held: "no" }, { ...pixel, scale: 1.5 }, { ...pixel, scale: 0 }, { ...pixel, pitch: { x: 8 } },
+      { ...pixel, pitch: { x: 8, y: -1 } }, { ...pixel, paletteChecked: undefined }, true,
+    ]) {
+      expect({ broken, present: "pixel" in withPixel(broken) }).toEqual({ broken, present: false });
+    }
+    expect(withPixel({ ...pixel, softAlphaFrames: [1, -1, "3", 3], offGridFrames: "2", offPaletteFrames: [] }).pixel)
+      .toEqual({ pitch: pixel.pitch, scale: 2, held: false, paletteChecked: true, softAlphaFrames: [1, 3] });
+    const mini = loadRoster(files({ "mini/project.json": MINI }))!.byContentSet.mini.sprite.motions[0].inspect!;
+    expect("pixel" in mini).toBe(false);
+  });
+
   test("a motion measured before the pipeline recorded the point has none", () => {
     // The canonical fixture predates `align.json`; absence is a real state,
     // and it is what tells the viewer to fall back to the cell instead of
@@ -411,9 +508,12 @@ describe("loop motions", () => {
     const inspectWith = (over: Record<string, unknown>) =>
       motionWith((m) => { m.inspect = { ...m.inspect, ...over }; }).inspect!;
 
-    const measured = inspectWith({ seam: 0.0065, step: 0.02, seamFill: 3, alphaCoverage: 0.31 });
+    const measured = inspectWith({ seam: 0.0065, step: 0.02, seamLimit: 0.04, seamFill: 3, alphaCoverage: 0.31 });
     expect(measured.seam).toBe(0.0065);
     expect(measured.step).toBe(0.02);
+    // The bar the run judged the seam against, carried so the panel reads
+    // the same verdict `loop` gave.
+    expect(measured.seamLimit).toBe(0.04);
     // `loop --seam-fill auto` inserted three in-betweens at the wrap; the
     // panel says so beside a frame count that is no longer the clip's own.
     expect(measured.seamFill).toBe(3);
@@ -431,14 +531,26 @@ describe("loop motions", () => {
     expect(perfect.alphaCoverage).toBe(0);
 
     for (const broken of [undefined, null, "0.0065", Number.NaN, {}, [0.0065], true]) {
-      const parsed = inspectWith({ seam: broken, step: broken, seamFill: broken, alphaCoverage: broken });
+      const parsed = inspectWith({ seam: broken, step: broken, seamLimit: broken, seamFill: broken, alphaCoverage: broken });
       expect({
         broken,
         seam: "seam" in parsed,
         step: "step" in parsed,
+        seamLimit: "seamLimit" in parsed,
         seamFill: "seamFill" in parsed,
         alpha: "alphaCoverage" in parsed,
-      }).toEqual({ broken, seam: false, step: false, seamFill: false, alpha: false });
+      }).toEqual({ broken, seam: false, step: false, seamLimit: false, seamFill: false, alpha: false });
+    }
+
+    // keyResidue follows the same rule: 0 is the clean cut, absent is "no
+    // hued plate was keyed" — never the same statement.
+    expect(inspectWith({ keyResidue: 0.0158 }).keyResidue).toBe(0.0158);
+    const clean = inspectWith({ keyResidue: 0 });
+    expect("keyResidue" in clean).toBe(true);
+    expect(clean.keyResidue).toBe(0);
+    for (const broken of [undefined, null, "0.01", Number.NaN, {}]) {
+      expect({ broken, present: "keyResidue" in inspectWith({ keyResidue: broken }) })
+        .toEqual({ broken, present: false });
     }
 
     // A sheet motion carries none of the three, and the anchor numbers it does
@@ -580,7 +692,7 @@ describe("exports", () => {
   };
 
   test("the format list is the one the scripts export", () => {
-    expect([...EXPORT_FORMATS]).toEqual(["mp4", "mov", "webm", "apng", "lottie", "png-seq"]);
+    expect([...EXPORT_FORMATS]).toEqual(["mp4", "mov", "webm", "apng", "lottie", "png-seq", "aseprite"]);
   });
 
   test("a sprite motion carries every format it exported, keyed by format", () => {
@@ -591,6 +703,7 @@ describe("exports", () => {
       apng: "bounce-export-apng",
       lottie: "bounce-export-lottie",
       "png-seq": "bounce-export-png-seq",
+      aseprite: "bounce-export-aseprite",
     };
     const motion = withBody((b) => { b.sprite.motions[0].exports = all; }).sprite.motions[0];
     expect(motion.exports).toEqual(all);
@@ -616,9 +729,15 @@ describe("exports", () => {
     expect(motion.exports).toEqual({ apng: "bounce-apng", webm: "bounce-webm", lottie: "bounce-lottie" });
   });
 
-  test("the character's Rive file travels, and a project without one has no block", () => {
+  test("the character's Rive file and Aseprite sheet travel, and a project without one has no block", () => {
     const withRiv = withBody((b) => { b.sprite.exports = { riv: "mini-export-riv" }; });
     expect(withRiv.sprite.exports).toEqual({ riv: "mini-export-riv" });
+    const both = withBody((b) => {
+      b.sprite.exports = { riv: "mini-export-riv", aseprite: "mini-export-aseprite", mp4: "stray" };
+    });
+    expect(both.sprite.exports).toEqual({ riv: "mini-export-riv", aseprite: "mini-export-aseprite" });
+    const sheetOnly = withBody((b) => { b.sprite.exports = { aseprite: "mini-export-aseprite", riv: "" }; });
+    expect(sheetOnly.sprite.exports).toEqual({ aseprite: "mini-export-aseprite" });
 
     // The 0.3.x file has no `sprite.exports` at all — the canonical fixture
     // is one — and it must load exactly as before.
@@ -758,5 +877,271 @@ describe("createCharacterProjectFile", () => {
     const body = JSON.parse(createCharacterProjectFile({ name: "Nameless" }));
     expect(body.sprite.character.cell).toEqual({ width: 256, height: 256 });
     expect("facing" in body.sprite.character).toBe(false);
+  });
+});
+
+/**
+ * The 0.5.0 sidecar additions: the route, the pixel spec, the asymmetry lock,
+ * directions and anchors, breathe and mirror sources, recorded prompt parts.
+ *
+ * Every one is optional, and the contract is two-sided. A 0.4.x file must
+ * parse to exactly what it parsed to before — no key appears that the file
+ * did not carry — and a malformed value is DROPPED, never defaulted, by the
+ * same rules the brief follows: each source's record only with that source,
+ * a record whole or not at all.
+ */
+describe("0.5.0 sidecar additions", () => {
+  const SEED = readFileSync(
+    join(import.meta.dir, "..", "seed", "lumi", "project.json"),
+    "utf-8",
+  );
+  const NEW_MOTION_KEYS = ["direction", "promptParts", "mirrorOf", "breathe", "variants", "slice"];
+
+  /** The mini fixture with its sidecar edited through JSON, then parsed. */
+  const parsed = (edit: (body: any) => void) => {
+    const body = JSON.parse(MINI);
+    edit(body);
+    return loadRoster(files({ "mini/project.json": JSON.stringify(body) }))!.byContentSet.mini;
+  };
+  const motion0 = (edit: (motion: any) => void) =>
+    parsed((b) => edit(b.sprite.motions[0])).sprite.motions[0];
+
+  test("a 0.4.x character — the seed and the canonical fixture — gains no key", () => {
+    for (const [key, body] of [["lumi", SEED], ["mini", MINI]] as const) {
+      const project = loadRoster(files({ [`${key}/project.json`]: body }))!.byContentSet[key];
+      expect(Object.keys(project.sprite.character).sort()).toEqual(
+        Object.keys(JSON.parse(body).sprite.character).sort(),
+      );
+      for (const ref of project.sprite.refs) expect("direction" in ref).toBe(false);
+      for (const motion of project.sprite.motions) {
+        for (const k of NEW_MOTION_KEYS) expect({ motion: motion.id, key: k, has: k in motion }).toEqual({ motion: motion.id, key: k, has: false });
+        expect(motion.source).toBeUndefined();
+      }
+    }
+  });
+
+  test("the route, the pixel spec and the asymmetry lock survive the parse", () => {
+    const character = parsed((b) => {
+      b.sprite.character.purpose = "game";
+      b.sprite.character.pixel = { logicalHeight: 32, palette: "mini-palette", colors: 16 };
+      b.sprite.character.asymmetric = "The sword is always in the right hand.";
+    }).sprite.character;
+    expect(character.purpose).toBe("game");
+    expect(character.pixel).toEqual({ logicalHeight: 32, palette: "mini-palette", colors: 16 });
+    expect(character.asymmetric).toBe("The sword is always in the right hand.");
+  });
+
+  test("an unknown route, a pixel spec without its height, and a blank lock are absent", () => {
+    for (const bad of [{ purpose: "cutscene" }, { purpose: 3 }]) {
+      expect("purpose" in parsed((b) => Object.assign(b.sprite.character, bad)).sprite.character).toBe(false);
+    }
+    // The height is what every pixel run snaps to: without it there is no
+    // spec, and the palette it names goes with it.
+    for (const pixel of [{ palette: "mini-palette" }, { logicalHeight: 0 }, { logicalHeight: 31.5 }, { logicalHeight: "32" }, 32]) {
+      expect("pixel" in parsed((b) => { b.sprite.character.pixel = pixel; }).sprite.character).toBe(false);
+    }
+    // The optional halves are dropped on their own, like a brief's budget.
+    expect(parsed((b) => { b.sprite.character.pixel = { logicalHeight: 48, palette: "", colors: -4 }; }).sprite.character.pixel)
+      .toEqual({ logicalHeight: 48 });
+    expect("asymmetric" in parsed((b) => { b.sprite.character.asymmetric = "   "; }).sprite.character).toBe(false);
+  });
+
+  test("colourways load by recolor.mjs's own rules, and a motion's files only on a sprite motion", () => {
+    const project = parsed((b) => {
+      b.sprite.character.pixel = {
+        logicalHeight: 32,
+        palette: "mini-palette",
+        variants: [
+          { name: "red-team", map: { "#3050A0": "#A03030" } },
+          { name: "near", map: { "#102030": "#302010" }, tolerance: 6 },
+          // Each of these fails a rule the writer checks with, and is dropped alone.
+          { name: "Red Team", map: { "#000000": "#ffffff" } },
+          { name: "empty", map: {} },
+          { name: "bad-hex", map: { "3050a0": "#a03030" } },
+          { name: "wide", map: { "#000000": "#ffffff" }, tolerance: 999 },
+          { name: "red-team", map: { "#000000": "#ffffff" } },
+        ],
+      };
+      b.sprite.motions[0].variants = {
+        "red-team": { sheet: "bounce-variant-red-team-sheet", atlas: "bounce-variant-red-team-atlas", gif: "bounce-variant-red-team-gif" },
+        near: { sheet: "bounce-variant-near-sheet", atlas: "bounce-variant-near-atlas" },
+        "no-atlas": { sheet: "bounce-variant-no-atlas-sheet" },
+        "Bad Name": { sheet: "x", atlas: "y" },
+      };
+    });
+    // Colours are read lower-case, as the writer writes them; the first of a name wins.
+    expect(project.sprite.character.pixel!.variants).toEqual([
+      { name: "red-team", map: { "#3050a0": "#a03030" } },
+      { name: "near", map: { "#102030": "#302010" }, tolerance: 6 },
+    ]);
+    expect(project.sprite.motions[0].variants).toEqual({
+      "red-team": { sheet: "bounce-variant-red-team-sheet", atlas: "bounce-variant-red-team-atlas", gif: "bounce-variant-red-team-gif" },
+      near: { sheet: "bounce-variant-near-sheet", atlas: "bounce-variant-near-atlas" },
+    });
+    // Nothing valid is no list, and a loop has no colourways to carry.
+    expect("variants" in parsed((b) => {
+      b.sprite.character.pixel = { logicalHeight: 32, variants: [{ name: "x", map: {} }] };
+    }).sprite.character.pixel!).toBe(false);
+    expect("variants" in motion0((m) => {
+      m.kind = "loop";
+      m.variants = { "red-team": { sheet: "a", atlas: "b" } };
+    })).toBe(false);
+  });
+
+  test("an anchor is its direction: without one it loads as custom, and no other role keeps one", () => {
+    const refs = parsed((b) => {
+      b.sprite.refs = [
+        { id: "anchor-left", asset: "ref-anchor-left", role: "anchor", label: "Left", direction: "left" },
+        { id: "anchor-lost", asset: "ref-anchor-lost", role: "anchor", label: "Lost" },
+        { id: "anchor-diag", asset: "ref-anchor-diag", role: "anchor", label: "Diag", direction: "front-left" },
+        { id: "turnaround", asset: "ref-turnaround", role: "turnaround", label: "T", direction: "front" },
+      ];
+    }).sprite.refs;
+    expect(refs).toEqual([
+      { id: "anchor-left", asset: "ref-anchor-left", role: "anchor", label: "Left", direction: "left" },
+      { id: "anchor-lost", asset: "ref-anchor-lost", role: "custom", label: "Lost" },
+      // four directions only: a diagonal is not one of them (yet)
+      { id: "anchor-diag", asset: "ref-anchor-diag", role: "custom", label: "Diag" },
+      { id: "turnaround", asset: "ref-turnaround", role: "turnaround", label: "T" },
+    ]);
+    expect([...DIRECTIONS]).toEqual(["front", "back", "left", "right"]);
+  });
+
+  test("a motion's direction survives; an unknown one, or an unknown source, is absent", () => {
+    expect(motion0((m) => { m.direction = "left"; }).direction).toBe("left");
+    expect("direction" in motion0((m) => { m.direction = "north"; })).toBe(false);
+    expect("source" in motion0((m) => { m.source = "magic"; })).toBe(false);
+    for (const source of ["sheet", "video", "breathe", "mirror"] as const) {
+      expect(motion0((m) => { m.source = source; }).source).toBe(source);
+    }
+  });
+
+  const BREATHE: BreatheRecord = {
+    still: "ref-portrait", depth: 0.02, breaths: 1, lag: 0.15, mode: "smooth",
+    anatomy: { rigidRow: 41, axisX: 32, from: "detected" },
+  };
+
+  test("a breathe record travels whole, and only with source breathe", () => {
+    expect(motion0((m) => { m.source = "breathe"; m.breathe = BREATHE; }).breathe).toEqual(BREATHE);
+    // On any other source it describes frames this motion does not have.
+    expect("breathe" in motion0((m) => { m.source = "sheet"; m.breathe = BREATHE; })).toBe(false);
+    expect("breathe" in motion0((m) => { m.breathe = BREATHE; })).toBe(false);
+    // Half a record cannot be re-run with one parameter changed — no record.
+    for (const key of ["still", "depth", "breaths", "lag", "mode"]) {
+      const { [key]: _gone, ...half } = BREATHE as unknown as Record<string, unknown>;
+      const m = motion0((x) => { x.source = "breathe"; x.breathe = half; });
+      expect({ key, has: "breathe" in m, source: m.source }).toEqual({ key, has: false, source: "breathe" });
+    }
+    for (const bad of [{ breaths: 1.5 }, { breaths: 0 }, { mode: "wobbly" }, { depth: -0.1 }]) {
+      expect("breathe" in motion0((m) => { m.source = "breathe"; m.breathe = { ...BREATHE, ...bad }; })).toBe(false);
+    }
+    // The optional half goes on its own; a key no breathe run writes
+    // (the horizontal amplitude upstream has and ours does not) is not kept.
+    expect(motion0((m) => {
+      m.source = "breathe";
+      m.breathe = { ...BREATHE, depthX: 0.01, anatomy: { rigidRow: 41, from: "detected" } };
+    }).breathe).toEqual({ still: "ref-portrait", depth: 0.02, breaths: 1, lag: 0.15, mode: "smooth" });
+  });
+
+  test("a manual torso band travels with the anatomy; a malformed one goes on its own", () => {
+    const withTorso: BreatheRecord = { ...BREATHE, anatomy: { rigidRow: 41, axisX: 32, from: "override", torsoHalf: 18 } };
+    expect(motion0((m) => { m.source = "breathe"; m.breathe = withTorso; }).breathe).toEqual(withTorso);
+    for (const bad of [0, -3, "wide", null]) {
+      const anatomy = motion0((m) => {
+        m.source = "breathe";
+        m.breathe = { ...BREATHE, anatomy: { rigidRow: 41, axisX: 32, from: "override", torsoHalf: bad } };
+      }).breathe?.anatomy;
+      expect({ bad, anatomy }).toEqual({ bad, anatomy: { rigidRow: 41, axisX: 32, from: "override" } });
+    }
+  });
+
+  test("a breathe's head-offset extremes travel whole with the record; malformed ones go on their own", () => {
+    // Where the head rides (image y, negative is up): the range, the travel
+    // between its ends, and the frames at each end — what `show` and the
+    // agent quote when asked how far the head moves.
+    const headOffset = { min: -3, max: 0, travel: 3, highest: [4], lowest: [0, 8] };
+    expect(motion0((m) => { m.source = "breathe"; m.breathe = { ...BREATHE, headOffset }; }).breathe)
+      .toEqual({ ...BREATHE, headOffset });
+    for (const bad of [
+      { ...headOffset, travel: "3" }, { ...headOffset, highest: [4.5] }, { ...headOffset, lowest: "0" },
+      { min: -3, max: 0, highest: [4], lowest: [0] }, [-3, 0],
+    ]) {
+      const breathe = motion0((m) => { m.source = "breathe"; m.breathe = { ...BREATHE, headOffset: bad }; }).breathe;
+      expect({ bad, breathe }).toEqual({ bad, breathe: BREATHE });
+    }
+  });
+
+  test("an auto slice's record travels whole with a sheet motion, and with nothing else", () => {
+    const slice: SliceRecord = {
+      mode: "auto", reason: "grid-clipped", gridClipped: [1, 2],
+      forced: { rows: false, cols: [false, true] }, clipped: [{ index: 3, why: "cut" }],
+    };
+    expect(motion0((m) => { m.slice = slice; }).slice).toEqual(slice);
+    expect(motion0((m) => { m.source = "sheet"; m.slice = slice; }).slice).toEqual(slice);
+    // Frames a clip, a still or a flip made were cut by no slice.
+    for (const source of ["video", "breathe", "mirror"]) {
+      expect({ source, has: "slice" in motion0((m) => { m.source = source; m.slice = slice; }) }).toEqual({ source, has: false });
+    }
+    expect(motion0((m) => { m.slice = { ...slice, reason: "asked", gridClipped: undefined, clipped: [] } }).slice)
+      .toEqual({ mode: "auto", reason: "asked", forced: slice.forced, clipped: [] });
+    for (const bad of [
+      { ...slice, mode: "grid" }, { ...slice, reason: "because" }, { ...slice, clipped: "3" },
+      { ...slice, forced: { rows: "no", cols: [] } }, { ...slice, forced: { rows: false, cols: [1] } }, "auto",
+    ]) {
+      expect({ bad, has: "slice" in motion0((m) => { m.slice = bad; }) }).toEqual({ bad, has: false });
+    }
+    // A malformed entry of a list goes on its own.
+    expect(motion0((m) => {
+      m.slice = { ...slice, gridClipped: [1, -2, "3"], clipped: [{ index: 3, why: "cut" }, { index: 2, why: "odd" }, 4] };
+    }).slice).toEqual({ ...slice, gridClipped: [1] });
+  });
+
+  test("mirrorOf travels only with source mirror", () => {
+    const mirror = motion0((m) => { m.source = "mirror"; m.mirrorOf = "walk-right"; m.direction = "left"; });
+    expect(mirror).toMatchObject({ source: "mirror", mirrorOf: "walk-right", direction: "left" });
+    expect("mirrorOf" in motion0((m) => { m.source = "sheet"; m.mirrorOf = "walk-right"; })).toBe(false);
+    expect("mirrorOf" in motion0((m) => { m.source = "mirror"; m.mirrorOf = ""; })).toBe(false);
+  });
+
+  const PARTS = {
+    builder: "sheet-prompt/1",
+    action: "a 4-frame bounce: squash, rise, apex, land",
+    guards: ["no-shadow", "direction:left"],
+    guide: { rows: 2, cols: 2, cell: { width: 64, height: 64 }, safeMargin: { x: 4, y: 6 } },
+  };
+
+  test("recorded prompt parts travel whole; a broken guide is dropped on its own", () => {
+    expect(motion0((m) => { m.promptParts = PARTS; }).promptParts).toEqual(PARTS);
+    for (const bad of [{ builder: "" }, { action: 3 }, { guards: "no-shadow" }, { guards: ["ok", 4] }]) {
+      expect("promptParts" in motion0((m) => { m.promptParts = { ...PARTS, ...bad }; })).toBe(false);
+    }
+    const { guide: _guide, ...unguided } = PARTS;
+    expect(motion0((m) => { m.promptParts = { ...PARTS, guide: { rows: 2, cols: 2, cell: { width: 64 } } }; }).promptParts)
+      .toEqual(unguided);
+  });
+
+  test("prompt parts describe a sheet: a breathe or a mirror carries none, a declared video keeps them", () => {
+    for (const source of ["breathe", "mirror"]) {
+      expect("promptParts" in motion0((m) => { m.source = source; m.promptParts = PARTS; })).toBe(false);
+    }
+    // sheet-prompt is allowed on a motion declared video (the sheet's run
+    // corrects the source), so the parts stay until that run lands.
+    for (const source of ["sheet", "video", undefined]) {
+      expect(motion0((m) => { m.source = source; m.promptParts = PARTS; }).promptParts).toEqual(PARTS);
+    }
+  });
+
+  test("character.pixel decides pixel art first; the style sentence only for a character without it", () => {
+    const character = (edit: (c: any) => void) => parsed((b) => edit(b.sprite.character)).sprite.character;
+    // Declared pixel art, whatever the style sentence says.
+    expect(riveDefaultImages(character((c) => { c.style = "soft plush render"; c.pixel = { logicalHeight: 32 }; })))
+      .toBe("webp-lossless");
+    // An older character without the spec keeps the style reading.
+    expect(riveDefaultImages(character((c) => { c.style = "16-bit pixel art"; }))).toBe("webp-lossless");
+    expect(riveDefaultImages(character((c) => { c.style = "soft plush render"; }))).toBe("webp");
+    // A spec the loader dropped decides nothing.
+    expect(riveIsPixelArt(character((c) => { c.style = "soft plush render"; c.pixel = { logicalHeight: 0 }; }))).toBe(false);
+    // The bare-string form the script still passes reads the style.
+    expect(riveDefaultImages("16-bit pixel art")).toBe("webp-lossless");
   });
 });

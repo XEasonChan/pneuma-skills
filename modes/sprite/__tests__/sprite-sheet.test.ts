@@ -23,11 +23,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  alphaColorAudit, buildClip, buildExprClip, buildNoiseClip, buildSheet, clipBoxCentres,
-  clipFrameDeltas, edgeLuma, readBbox, readColorBbox, silhouetteDiff, webpAnimation,
+  alphaColorAudit, buildClip, buildExprClip, buildLayerClip, buildNoiseClip, buildSheet, clipBoxCentres,
+  clipFrameDeltas, clipFramesRgba, edgeLuma, readBbox, readColorBbox, silhouetteDiff, webpAnimation,
   webpStackedFrames, CELL_OFFSETS,
 } from "./fixtures/pipeline/make-sheet.mjs";
-import type { BuildExprClipOptions, BuildSheetOptions } from "./fixtures/pipeline/make-sheet.mjs";
+import type { BuildExprClipOptions, BuildLayerClipOptions, BuildSheetOptions } from "./fixtures/pipeline/make-sheet.mjs";
 import { loadRoster } from "../domain.js";
 import { exportRows, rivePlanFor } from "../viewer/panel.js";
 import { decodeRiv, type RiveObject } from "./fixtures/exports/decode-riv.mjs";
@@ -410,7 +410,12 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       expect(out.cell).toEqual({ width: 64, height: 64 });
       expect(out.exact).toBe(true);
       expect(out.frames).toHaveLength(4);
-      expect(readdirSync(join(ws, "cells")).sort()).toEqual(["00.png", "01.png", "02.png", "03.png"]);
+      // …plus the record of the grid they came from, which `inspect` reads
+      // to tell a row boundary from an ordinary step.
+      expect(readdirSync(join(ws, "cells")).sort()).toEqual(["00.png", "01.png", "02.png", "03.png", "slice.json"]);
+      expect(JSON.parse(readFileSync(join(ws, "cells", "slice.json"), "utf-8"))).toEqual({
+        rows: 2, cols: 2, cell: { width: 64, height: 64 }, margin: 0, gutter: 0,
+      });
       // row-major: cell 0 keeps the top-left square at its cell-local offset
       expect(readBbox(join(ws, "cells", "00.png"))).toMatchObject({
         width: 64,
@@ -686,8 +691,15 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
         spriteSourceSize: { x: 0, y: 0, w: 64, h: 64 },
         sourceSize: { w: 64, h: 64 },
         pivot: { x: 0.5, y: 0.7344 }, // 47 / 64, not the cell edge
+        // The same point under the key PixiJS 8 reads (Spritesheet.mjs:119,
+        // `defaultAnchor: data.anchor` — it never reads `pivot`); Phaser reads
+        // `anchor || pivot` (JSONHash.js:80). `pivot` stays for older readers.
+        anchor: { x: 0.5, y: 0.7344 },
         duration: 125,
       });
+      for (const frame of Object.values(atlas.frames) as Array<{ pivot: unknown; anchor: unknown }>) {
+        expect(frame.anchor).toEqual(frame.pivot);
+      }
       expect(atlas.frames.bounce_03.frame).toEqual({ x: 64, y: 64, w: 64, h: 64 });
       expect(atlas.animations).toEqual({ bounce: ["bounce_00", "bounce_01", "bounce_02", "bounce_03"] });
     });
@@ -747,6 +759,7 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
 
       const atlas = JSON.parse(readFileSync(join(ws, "atlas.json"), "utf-8"));
       expect(atlas.frames.bounce_00.pivot).toEqual({ x: 0.5, y: 1 });
+      expect(atlas.frames.bounce_00.anchor).toEqual({ x: 0.5, y: 1 });
       // an absent key is how a consumer tells "assumed" from "measured"
       expect(atlas.meta.anchorPoint).toBeUndefined();
     });
@@ -987,9 +1000,19 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
         anchorPoint: { x: 32, y: 47 },
         anchorDrift: { x: 0, y: 0 },
         bodyDrift: 0,
+        // Four same-sized squares: aligned, the head band never moves. In
+        // their cells they sit at x 10, 10, 18, 16 — offsets 0, 0, 8, 6,
+        // whose spread about their fitted line is √4.3 = 2.074 px: the
+        // placement the sheet drew, which the alignment took out. A 2-column
+        // grid is too short a row to judge row boundaries on, so the two
+        // lists are checked and empty.
+        headDrift: 0,
+        sourceHeadDrift: 2.074,
         maxJump: 0,
         scaleDrift: 0,
         emptyFrames: [],
+        nearDuplicates: [],
+        rowJumps: [],
         warnings: [],
       });
 
@@ -1128,7 +1151,7 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       const second = runJson(...args);
       expect(second.frames).toEqual(first.frames);
       expect(readdirSync(join(motionDir, "frames")).sort()).toEqual(["00.png", "01.png", "align.json"]);
-      expect(readdirSync(join(motionDir, "cells")).sort()).toEqual(["00.png", "01.png"]);
+      expect(readdirSync(join(motionDir, "cells")).sort()).toEqual(["00.png", "01.png", "slice.json"]);
     });
 
     test("a shrinking frame count leaves no stale frame or cell files", () => {
@@ -1145,7 +1168,9 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
         "--out", motionDir, "--name", "bounce", "--fps", "8", "--pad", "17",
       );
       expect(readdirSync(join(motionDir, "frames")).sort()).toEqual(["00.png", "01.png", "align.json"]);
-      expect(readdirSync(join(motionDir, "cells")).sort()).toEqual(["00.png", "01.png"]);
+      expect(readdirSync(join(motionDir, "cells")).sort()).toEqual(["00.png", "01.png", "slice.json"]);
+      // The record describes the grid on disk now, not the 2x2 it replaced.
+      expect(JSON.parse(readFileSync(join(motionDir, "cells", "slice.json"), "utf-8"))).toMatchObject({ rows: 1, cols: 2 });
     });
 
     test("keeps the pre-align cells so the report can be reproduced and the alignment redone", () => {
@@ -1162,7 +1187,7 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
         "--name", "clip", "--fps", "8", "--pad", "8", "--smooth",
       );
       expect(out.cells).toBe(join(motionDir, "cells"));
-      expect(readdirSync(join(motionDir, "cells")).sort()).toEqual(["00.png", "01.png", "02.png"]);
+      expect(readdirSync(join(motionDir, "cells")).sort()).toEqual(["00.png", "01.png", "02.png", "slice.json"]);
       expect(out.inspect.warnings).toEqual([
         "cell 00 is clipped — the drawing leaves its grid cell",
         "cell 01 is clipped — the drawing leaves its grid cell",
@@ -1401,6 +1426,15 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       expect(json.loops[0].period).toBeLessThanOrEqual(1.1);
       expect(json.loops[0].seam).toBeLessThan(json.loops[0].step);
       expect(json.loops.length).toBeLessThanOrEqual(3);
+      // …and the verdict behind them: a repeat, read at the clip's own rate.
+      expect(json.cycle.verdict).toBe("periodic");
+      expect(json.cycle.period).toBe(1);
+      expect(json.cycle.periodicity).toBeGreaterThan(json.cycle.periodicityMin);
+      expect(json.cycle.ambiguous).toBeNull();
+      expect(json.loops[0].ambiguous).toBeNull();
+      expect(json.loops[0].wrap).toBeGreaterThan(0);
+      // One-shots are the reading for a clip that does NOT repeat.
+      expect(json.oneShots).toEqual([]);
 
       // The rhythm, without a plot: flat through the hold, then moving.
       expect(json.profile.fps).toBe(10);
@@ -1441,6 +1475,8 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       expect(json.stillStart).toBeNull();
       expect(json.stillEnd).toBeNull();
       expect(json.loops).toEqual([]);
+      expect(json.cycle).toMatchObject({ verdict: "none", reason: "still", period: null });
+      expect(json.oneShots).toEqual([]);
       expect(json.warnings.join(" ")).toContain("never moves");
     });
 
@@ -1478,6 +1514,143 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       // …and nothing was written next to the motion either: a contact sheet is
       // a working file, not an asset.
       expect(readdirSync(ws).sort()).toEqual(["t.png", "tmp"]);
+    });
+
+    describe("cycle analysis", () => {
+      /** Built once per name, like every other fixture, and only ever read. */
+      const layered = (key: string, name: string, options: BuildLayerClipOptions) => {
+        const id = `clip:${key}`;
+        if (!built.has(id)) built.set(id, buildLayerClip(join(shared(), name), options));
+        return built.get(id)!;
+      };
+      const PLATE = [0x00, 0xb1, 0x40];
+      /** A walker seen from the side, 96x96, 4 s at 24 fps: a body that bobs
+       *  every step and two legs swinging in antiphase over a 1 s stride. */
+      const body = { w: 28, h: 20, color: "0xf0d8a8", x: 34, y: "22-4*abs(sin(2*PI*t))" };
+      const leg = (color: string, sign: "+" | "-") => ({ w: 8, h: 24, color, x: `44${sign}12*sin(2*PI*t)`, y: 42 });
+      /** Something that never repeats — texture, a fly — so no repeat is exact. */
+      const fly = { w: 6, h: 6, color: "0x303030", x: "4+mod(n*n*7+n*3,23)", y: 80 };
+      /** Near and far legs differing ONLY in colour: the outline repeats every
+       *  step (0.5 s), the picture only every stride (1 s). */
+      const colourLegs = () => layered("walker-colour", "walker-colour.mp4", {
+        layers: [leg("0x4040d0", "-"), leg("0xd04040", "+"), body],
+      });
+      /** Legs that read alike, plus the fly: the step and the stride repeat
+       *  about as well, and pixels cannot say which one is the gait. */
+      const sameLegs = (frames = 96) => layered(`walker-same-${frames}`, `walker-same-${frames}.mp4`, {
+        frames, layers: [leg("0xd04040", "-"), leg("0xd04040", "+"), body, fly],
+      });
+      /** Rest for 1.25 s, one hop, rest to the end: an action, not a cycle. */
+      const hop = () => layered("one-hop", "one-hop.mp4", {
+        layers: [{ w: 24, h: 24, color: "0xf0d8a8", x: 36, y: "if(between(t,1.25,2.25),56-28*sin(PI*(t-1.25)),56)" }],
+      });
+
+      /** The subject's outline and colour in one frame, read off the plate. */
+      const subject = (rgba: Uint8Array, p: number) =>
+        Math.abs(rgba[p] - PLATE[0]) + Math.abs(rgba[p + 1] - PLATE[1]) + Math.abs(rgba[p + 2] - PLATE[2]) > 90;
+
+      test("the fixtures are what they claim: an outline that repeats every step, colour every stride", () => {
+        for (const path of [colourLegs(), sameLegs(), hop()]) {
+          expect(Math.max(...clipFrameDeltas(path))).toBeGreaterThan(10);
+        }
+        const { frames } = clipFramesRgba(colourLegs());
+        let outline = 0;
+        let colour = 0;
+        let ink = 0;
+        for (let i = 24; i < 48; i++) {
+          const [a, b] = [frames[i], frames[i + 12]];
+          for (let p = 0; p < a.length; p += 4) {
+            const [inA, inB] = [subject(a, p), subject(b, p)];
+            if (inA || inB) ink++;
+            if (inA !== inB) outline++;
+            else if (inA && Math.abs(a[p] - b[p]) + Math.abs(a[p + 2] - b[p + 2]) > 120) colour++;
+          }
+        }
+        // Half a stride apart the silhouettes agree to within the codec's
+        // edge noise, while a large share of the legs has swapped colour.
+        expect(outline / ink).toBeLessThan(0.03);
+        expect(colour / ink).toBeGreaterThan(0.1);
+      });
+
+      test("legs that differ only in colour: the stride, not the step the outline repeats", () => {
+        const ws = fresh();
+        const json = runJson("contact", colourLegs(), "--out", join(ws, "w.png"), "--count", "8");
+        expect(json.profile.fps).toBe(24);
+        expect(json.cycle.verdict).toBe("periodic");
+        expect(json.cycle.period).toBe(1);
+        expect(json.cycle.ambiguous).toBeNull();
+        expect(json.loops.length).toBeGreaterThan(0);
+        for (const loop of json.loops) {
+          expect(loop.period).toBeGreaterThanOrEqual(0.958);
+          expect(loop.period).toBeLessThanOrEqual(1.042);
+          expect(loop.ambiguous).toBeNull();
+        }
+        // The half stride is a dip too — just a far shallower one.
+        const minima = new Map<number, number>(json.cycle.minima);
+        expect(minima.get(0.5)).toBeGreaterThan(5 * minima.get(1)!);
+      });
+
+      test("legs that read alike: the cycle is ambiguous, and both lengths are offered", () => {
+        const ws = fresh();
+        const json = runJson("contact", sameLegs(), "--out", join(ws, "a.png"), "--count", "8");
+        expect(json.cycle.verdict).toBe("periodic");
+        expect(json.cycle.period).toBe(0.5);
+        expect(json.cycle.ambiguous.periods).toEqual([0.5, 1]);
+        const periods = json.loops.map((l: { period: number }) => l.period);
+        expect(periods.some((p: number) => Math.abs(p - 0.5) <= 0.05)).toBe(true);
+        expect(periods.some((p: number) => Math.abs(p - 1) <= 0.05)).toBe(true);
+        for (const loop of json.loops) expect(loop.ambiguous).toEqual(json.cycle.ambiguous);
+        const warning = json.warnings.find((w: string) => w.includes("ambiguous"));
+        expect(warning).toContain("0.5s");
+        expect(warning).toContain("--gait");
+      });
+
+      test("--gait walk takes the stride under the floor, and refuses a clip that holds one step", () => {
+        const ws = fresh();
+        const doubled = runJson("contact", sameLegs(), "--out", join(ws, "g.png"), "--count", "8", "--gait", "walk");
+        expect(doubled.cycle.verdict).toBe("periodic");
+        expect(doubled.cycle.period).toBe(1);
+        expect(doubled.cycle.gait).toEqual({ kind: "walk", floor: 0.6, doubled: { from: 0.5, to: 1 } });
+        expect(doubled.loops[0].period).toBeGreaterThanOrEqual(0.958);
+
+        // 1.25 s: room to see the step repeat, none to see the stride.
+        const half = runJson("contact", sameLegs(30), "--out", join(ws, "h.png"), "--count", "6", "--gait", "walk");
+        expect(half.cycle).toMatchObject({ verdict: "none", reason: "half-stride" });
+        expect(half.loops).toEqual([]);
+        expect(half.warnings.join(" ")).toContain("half a stride");
+        // Without the flag the same clip is a 0.5 s cycle — nothing here
+        // knows it is a walk until it is told.
+        expect(runJson("contact", sameLegs(30), "--out", join(ws, "i.png"), "--count", "6").cycle.period).toBe(0.5);
+
+        const bad = run("contact", sameLegs(30), "--out", join(ws, "j.png"), "--gait", "skip", "--json");
+        expect(bad.code).toBe(1);
+        expect(bad.err).toContain("--gait");
+        expect(bad.err).toContain("walk or run");
+      });
+
+      test("a single hop is a one-shot — rest, action, rest — and no cycle", () => {
+        const ws = fresh();
+        const json = runJson("contact", hop(), "--out", join(ws, "o.png"), "--count", "8");
+        expect(json.cycle.verdict).toBe("none");
+        expect(json.loops).toEqual([]);
+        expect(json.warnings.join(" ")).toContain("no cycle");
+        expect(json.oneShots).toHaveLength(1);
+        const [shot] = json.oneShots;
+        // The action inside the hop, and at least two quieter frames outside it
+        // on each side — the shortest cut that still holds the whole
+        // departure, so its ends sit where the hop is barely off the floor.
+        expect(shot.action.start).toBeGreaterThanOrEqual(1.25);
+        expect(shot.action.end).toBeLessThanOrEqual(2.25);
+        expect(shot.action.start - shot.start).toBeGreaterThanOrEqual(2 / 24 - 0.001);
+        expect(shot.end - shot.action.end).toBeGreaterThanOrEqual(2 / 24 - 0.001);
+        expect(shot.start).toBeLessThanOrEqual(1.3);
+        expect(shot.end).toBeGreaterThanOrEqual(2.2);
+        expect(shot.peak).toBeGreaterThan(1.6);
+        expect(shot.peak).toBeLessThan(1.9);
+        expect(["contrast", "moved"]).toContain(shot.rule);
+        const human = run("contact", hop(), "--out", join(ws, "p.png"), "--count", "6");
+        expect(human.out).toContain(`one-shot ${shot.start}–${shot.end}s`);
+      });
     });
   });
 
@@ -1753,6 +1926,9 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
     });
     /** A box that leaves and never comes back: the loop that does not close. */
     const sweep = () => clip("sweep", "sweep.mp4", { x: "8+40*t" });
+    /** The same exit at half the speed: the jump back is as big and the steps
+     *  are half as small, so no in-between can hide it behind them. */
+    const slowSweep = () => clip("slow-sweep", "slow-sweep.mp4", { x: "8+20*t" });
     /** A box that never moves at all. Its silhouette step is 0 — far under the
      *  0.005 absolute floor the hold threshold used to carry — so it is the
      *  clip that tells which of the two rules decided what counts as held.
@@ -2029,6 +2205,92 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       expect(json.warnings).toEqual([]);
     });
 
+    describe("the seam in colour, with a noise floor", () => {
+      /** Built like `clip`, from several overlaid boxes. */
+      const layered = (key: string, name: string, options: BuildLayerClipOptions) => {
+        const id = `clip:${key}`;
+        if (!built.has(id)) built.set(id, buildLayerClip(join(shared(), name), options));
+        return built.get(id)!;
+      };
+      /** A near-still loop at noise level, matted: a body that holds, and a
+       *  4 px speck crawling 1 px a frame that jumps back at the wrap — a wrap
+       *  of four steps, every one of them far under anything visible. */
+      const nearStill = () => layered("near-still", "near-still.mov", {
+        width: 128, height: 128, frames: 48, background: "black@0", encode: "prores4444",
+        layers: [
+          { w: 48, h: 48, color: "0xf0d8a8", x: 40, y: 40 },
+          { w: 4, h: 4, color: "white", x: "10+n", y: 100 },
+        ],
+      });
+      /** A still body whose eye closes in the last four frames: the outline
+       *  is identical at the wrap, the picture is not. */
+      const blink = () => layered("blink", "blink.mov", {
+        width: 96, height: 96, frames: 48, background: "black@0", encode: "prores4444",
+        layers: [
+          { w: 40, h: 40, color: "0xf0d8a8", x: 28, y: 28 },
+          { w: 24, h: 12, color: "white", x: 36, y: 38 },
+          { w: 24, h: 12, color: "0x202020", x: "if(gte(n,44),36,-60)", y: 38 },
+        ],
+      });
+
+      test("a near-still loop whose wrap is several steps of noise closes, with no in-betweens", () => {
+        expect(Math.max(...clipFrameDeltas(nearStill()))).toBeGreaterThan(10);
+        const { json } = loop("near-still", nearStill(), ["--key", "alpha", ...WEBP_ONLY]);
+        // Over two steps — the rule without a floor would fill it (the
+        // silhouette rule this replaced filled 3) — and under the floor.
+        expect(json.inspect.seam).toBeGreaterThan(2 * json.inspect.step);
+        expect(json.inspect.seamLimit).toBe(0.005);
+        expect(json.inspect.seam).toBeLessThanOrEqual(json.inspect.seamLimit);
+        expect(json.seamFill).toBe(0);
+        expect(json.inspect.frameCount).toBe(48);
+        expect(json.warnings.join(" ")).not.toContain("does not close");
+      });
+
+      test("a blink at the wrap does not close, though the outline does", () => {
+        // The fixture: the last frame's alpha is the first frame's, exactly.
+        const { frames } = clipFramesRgba(blink());
+        const [first, last] = [frames[0], frames[frames.length - 1]];
+        let alphaDiff = 0;
+        let colourDiff = 0;
+        for (let p = 0; p < first.length; p += 4) {
+          alphaDiff += Math.abs(first[p + 3] - last[p + 3]);
+          colourDiff += Math.abs(first[p] - last[p]);
+        }
+        expect(alphaDiff).toBe(0);
+        expect(colourDiff).toBeGreaterThan(0);
+
+        const { json } = loop("blink", blink(), ["--key", "alpha", "--seam-fill", "none", ...WEBP_ONLY]);
+        expect(json.inspect.seam).toBeGreaterThan(json.inspect.seamLimit);
+        const warning = json.warnings.find((w: string) => w.includes("does not close"));
+        expect(warning).toContain(`it closes at ${json.inspect.seamLimit}`);
+      });
+
+      test("register-run carries the bar, and `show` judges by it", () => {
+        // The one character-writer path a loop takes (see the transition
+        // cases' `hops`): clip in the motion dir, cut there, registered.
+        const character = join(fresh(), "char");
+        const motionDir = join(character, "motions", "idle");
+        projectCmd(character, "init", "--name", "Speck", "--cell", "64x64");
+        mkdirSync(motionDir, { recursive: true });
+        cpSync(nearStill(), join(motionDir, "video-veed-1.mov"));
+        const json = runJson("loop", join(motionDir, "video-veed-1.mov"), "--out", motionDir, "--name", "idle",
+          "--key", "alpha", ...WEBP_ONLY);
+        expect(json.inspect.seamLimit).toBe(0.005);
+        writeFileSync(join(motionDir, "run.json"), JSON.stringify(json));
+        projectCmd(character, "add-motion", "--id", "idle", "--label", "Idle", "--kind", "loop", "--fps", "24");
+        projectCmd(character, "set-motion", "--motion", "idle", "--brief-duration", "2", "--brief-width", "128", "--brief-interpolator", "none");
+        projectCmd(character, "add-video", "--motion", "idle", "--file", "motions/idle/video-veed-1.mov",
+          "--model", "seedance-2.5", "--mode", "first-last", "--status", "ready");
+        projectCmd(character, "register-run", "--motion", "idle", "--run", join(motionDir, "run.json"));
+        const doc = JSON.parse(readFileSync(join(character, "project.json"), "utf-8"));
+        const motion = doc.sprite.motions.find((m: { id: string }) => m.id === "idle");
+        expect(motion.inspect.seamLimit).toBe(0.005);
+        const shown = Bun.spawnSync([process.execPath, PROJECT, "show", "--dir", character, "--motion", "idle"], { stdout: "pipe", stderr: "pipe" });
+        const line = shown.stdout.toString().split("\n").find((l) => l.includes("seam "));
+        expect(line).toContain("(limit 0.005) — closes");
+      });
+    });
+
     test("a loop that does not close says so, with both numbers", () => {
       // --seam-fill none, because "did this clip close" is a question about
       // the frames the model drew; what the default then does about the answer
@@ -2051,17 +2313,22 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       // A constant-speed orbit's seam IS one of its steps, so it gets none.
       expect(loop("orbit", orbit()).json.seamFill).toBe(0);
 
-      // The sweep never comes back: seam 1 (no overlap at all) against a 0.2
-      // step, so `ceil(1 / 0.2) - 1` wants 4 and 4 is the cap. The wrap gets
-      // shorter — 1 → 0.44 — and the loop four frames longer, but four
-      // invented frames cannot turn a clip that was never shot as a loop into
-      // one, so the warning has to survive, now saying what was tried.
-      const { json } = loop("sweep-auto", sweep(), WEBP_ONLY);
+      // The slow sweep never comes back: its wrap is 0.0659 against a step
+      // of 0.0056 (no overlap at all, twelve steps), so `ceil(seam / step) - 1`
+      // wants 11 and 4 is the cap. The wrap gets shorter — 0.0659 → 0.0201 —
+      // and the loop four frames longer, but four invented frames cannot turn
+      // a clip that was never shot as a loop into one, so the warning has to
+      // survive, now saying what was tried. (Measured 2026-09-27. The fast
+      // sweep is a poor witness here: minterpolate cross-fades a jump it
+      // cannot track, and a mean colour difference scores each 1/5 fade as
+      // about two steps, so its filled wrap lands 0.6 % over the limit.)
+      const { json } = loop("slow-sweep-auto", slowSweep(), WEBP_ONLY);
+      const shot = loop("slow-sweep", slowSweep(), ["--seam-fill", "none", ...WEBP_ONLY]).json;
       expect(json.seamFill).toBe(4);
       expect(json.inspect.seamFill).toBe(4);
-      expect(json.inspect.frameCount).toBe(28);
-      expect(json.inspect.seam).toBeLessThan(loop("sweep", sweep(), ["--seam-fill", "none", ...WEBP_ONLY]).json.inspect.seam);
-      expect(json.inspect.seam).toBeGreaterThan(2 * json.inspect.step);
+      expect(json.inspect.frameCount).toBe(shot.inspect.frameCount + 4);
+      expect(json.inspect.seam).toBeLessThan(shot.inspect.seam);
+      expect(json.inspect.seam).toBeGreaterThan(1.5 * json.inspect.seamLimit);
       expect(json.warnings.join(" ")).toContain("does not close");
       expect(json.warnings.join(" ")).toContain("4 interpolated frame(s)");
     }, SEAM_FILL_TIMEOUT_MS);
@@ -3122,6 +3389,222 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       expect(animation.frames[11]).toEqual({ file: "011.png", duration: 83 });
     }, EXPORT_TIMEOUT_MS);
 
+    // ── aseprite: the sheet engines build their animations from ──────────────
+
+    /** The pixels of a PNG held in memory, and one RGBA pixel of them. */
+    const decoded = (bytes: Buffer) => readRgba(bytes);
+    const pixelAt = (image: { width: number; data: Buffer }, x: number, y: number) =>
+      [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 4)];
+    const atlasOf = (dir: string, motion: string) =>
+      JSON.parse(readFileSync(join(dir, "motions", motion, "atlas.json"), "utf-8"));
+
+    test("aseprite re-describes a motion's own sheet: numeric frame keys, one tag, the atlas's rects, durations and anchor", () => {
+      const { dir, json } = exported("bounce-aseprite", "bounce", "--format", "aseprite");
+      expect(json.out).toBe(join(dir, "motions", "bounce", "exports", "bounce-aseprite.zip"));
+      expect(json).toMatchObject({
+        kind: "export", scope: "motion", motion: "bounce", format: "aseprite",
+        frameCount: 4, fps: 8, loop: true, repeat: null, shadow: null,
+      });
+      const entries = readZip(readFileSync(json.out));
+      expect(entries.map((e) => e.name)).toEqual(["bounce/bounce.png", "bounce/bounce.json"]);
+      // The packed sheet byte for byte — re-described, not re-encoded.
+      expect(entries[0].data).toEqual(readFileSync(join(dir, "motions", "bounce", "sheet.png")));
+
+      const doc = JSON.parse(entries[1].data.toString("utf8"));
+      const atlas = atlasOf(dir, "bounce");
+      expect(Object.keys(doc.frames)).toEqual(["0", "1", "2", "3"]);
+      expect(doc.meta).toMatchObject({
+        image: "bounce.png", format: "RGBA8888", size: atlas.meta.size, scale: "1",
+        frameTags: [{ name: "bounce", from: 0, to: 3, direction: "forward" }],
+      });
+      atlas.animations.bounce.forEach((key: string, i: number) => {
+        expect(doc.frames[String(i)]).toMatchObject({
+          frame: atlas.frames[key].frame,
+          duration: atlas.frames[key].duration,
+          anchor: atlas.frames[key].pivot,
+        });
+      });
+      expect(json.sheet).toEqual(atlas.meta.size);
+      expect(json.tags).toEqual([{ name: "bounce", from: 0, to: 3 }]);
+      expect(json.size).toBe(statSync(json.out).size);
+    }, EXPORT_TIMEOUT_MS);
+
+    test("aseprite --scale enlarges the sheet nearest-neighbour with its rects; the anchor is a ratio and stays", () => {
+      const { dir, json } = exported("hop-aseprite-x2", "hop", "--format", "aseprite", "--scale", "2");
+      const entries = readZip(readFileSync(json.out));
+      const sheet = decoded(readFileSync(join(dir, "motions", "hop", "sheet.png")));
+      const big = decoded(entries[0].data);
+      expect({ w: big.width, h: big.height }).toEqual({ w: sheet.width * 2, h: sheet.height * 2 });
+      for (const [x, y] of [[10, 10], [40, 30], [70, 90]]) {
+        expect(pixelAt(big, 2 * x + 1, 2 * y + 1)).toEqual(pixelAt(sheet, x, y));
+      }
+      const doc = JSON.parse(entries[1].data.toString("utf8"));
+      const atlas = atlasOf(dir, "hop");
+      const r = atlas.frames.hop_01.frame;
+      expect(doc.frames["1"].frame).toEqual({ x: 2 * r.x, y: 2 * r.y, w: 2 * r.w, h: 2 * r.h });
+      expect(doc.frames["1"].anchor).toEqual(atlas.frames.hop_01.pivot);
+      expect(doc.frames["1"].duration).toBe(100);
+      expect(json).toMatchObject({ scale: 2, width: 126, height: 122, sheet: { w: sheet.width * 2, h: sheet.height * 2 } });
+    }, EXPORT_TIMEOUT_MS);
+
+    test("the whole character: every ready sprite motion on one sheet, a frame tag each", () => {
+      const dir = useCharacter();
+      const json = runJson("export", dir, "--format", "aseprite");
+      expect(json.out).toBe(join(dir, "exports", "mini-aseprite.zip"));
+      expect(json).toMatchObject({ kind: "export", scope: "character", format: "aseprite", frameCount: 8, shadow: null });
+      expect(json.motions.map((m: any) => m.id)).toEqual(["bounce", "hop"]);
+      // A loop is a sequence, not a sheet; a planned motion has no frames.
+      expect(json.excluded.map((e: any) => e.motion)).toEqual(["flame", "walk"]);
+      expect(json.excluded[0].reason).toMatch(/loop/);
+      expect(json.excluded[1].reason).toMatch(/not ready/);
+      // Made from every registered frame of both, in order — what
+      // register-export hangs the file off.
+      const framesOf = (id: string) => [0, 1, 2, 3].map((i) => join(dir, "motions", id, "frames", `0${i}.png`));
+      expect(json.frames).toEqual([...framesOf("bounce"), ...framesOf("hop")]);
+
+      const entries = readZip(readFileSync(json.out));
+      expect(entries.map((e) => e.name)).toEqual(["mini/mini.png", "mini/mini.json"]);
+      const doc = JSON.parse(entries[1].data.toString("utf8"));
+      expect(Object.keys(doc.frames)).toEqual(["0", "1", "2", "3", "4", "5", "6", "7"]);
+      expect(doc.meta.frameTags).toEqual([
+        { name: "bounce", from: 0, to: 3, direction: "forward" },
+        { name: "hop", from: 4, to: 7, direction: "forward" },
+      ]);
+      const bounce = atlasOf(dir, "bounce");
+      const hop = atlasOf(dir, "hop");
+      // Each motion's sheet keeps its rects, pushed down by the rows above it.
+      const below = bounce.meta.size.h;
+      expect(doc.meta.size).toEqual({ w: Math.max(bounce.meta.size.w, hop.meta.size.w), h: below + hop.meta.size.h });
+      expect(json.sheet).toEqual(doc.meta.size);
+      hop.animations.hop.forEach((key: string, i: number) => {
+        const r = hop.frames[key].frame;
+        expect(doc.frames[String(4 + i)]).toMatchObject({
+          frame: { x: r.x, y: r.y + below, w: r.w, h: r.h },
+          duration: 100,
+          anchor: hop.frames[key].pivot,
+        });
+      });
+      expect(doc.frames["0"].duration).toBe(125);
+      // And the pixels are the motions' own, where the rects say.
+      const whole = decoded(entries[0].data);
+      const hopSheet = decoded(readFileSync(join(dir, "motions", "hop", "sheet.png")));
+      const r = hop.frames.hop_02.frame;
+      for (let y = 0; y < r.h; y += 7) {
+        for (let x = 0; x < r.w; x += 7) {
+          expect(pixelAt(whole, r.x + x, r.y + below + y)).toEqual(pixelAt(hopSheet, r.x + x, r.y + y));
+        }
+      }
+    }, EXPORT_TIMEOUT_MS);
+
+    test("the whole character is exported as aseprite only, and a loop never is", () => {
+      const dir = useCharacter();
+      const whole = run("export", dir, "--format", "mp4", "--json");
+      expect(whole.code).toBe(1);
+      expect(whole.err).toMatch(/is a character.*--format aseprite/);
+      const loop = run("export", join(dir, "motions", "flame"), "--format", "aseprite", "--json");
+      expect(loop.code).toBe(1);
+      expect(loop.err).toMatch(/a loop has no sprite sheet or atlas/);
+      expect(existsSync(join(dir, "exports"))).toBe(false);
+    });
+
+    // ── --shadow: the silhouette's shadow, about the foot ───────────────────
+
+    test("--shadow casts the shadow left of the feet onto a canvas that holds it", () => {
+      const { json } = exported("hop-mp4-shadow", "hop", "--format", "mp4", "--shadow");
+      expect(json.shadow).toMatchObject({ squash: 0.25, shear: 0.8, opacity: 0.4, blur: 3, color: "#140f1e", from: "atlas" });
+      const probe = probeVideo(json.out);
+      expect(probe.frames).toBe(4);
+      expect({ width: probe.width, height: probe.height }).toEqual({ width: json.width, height: json.height });
+      // The shadow reaches past the frame's left edge, so the canvas grew.
+      expect(json.width).toBeGreaterThan(64);
+      const { x, y } = json.shadow.anchor;
+      const pixel = (px: number, py: number) => firstFramePixel(json.out, Math.round(px), Math.round(py));
+      // Beside the body, just above the ground line: in the shadow only —
+      // darker than the white it was cast on, far from black.
+      for (const channel of pixel(x - 20, y - 3)) {
+        expect(channel).toBeLessThan(235);
+        expect(channel).toBeGreaterThan(60);
+      }
+      // Well above the ground, left of the body: nothing there.
+      for (const channel of pixel(x - 26, y - 22)) expect(channel).toBeGreaterThan(245);
+    }, EXPORT_TIMEOUT_MS);
+
+    test("--shadow keeps the alpha of a transparent video: the shadow is partly transparent, the body opaque", () => {
+      const { json } = exported("hop-mov-shadow", "hop", "--format", "mov", "--shadow");
+      const r = spawnSync("ffmpeg", ["-v", "error", "-i", json.out, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"], { maxBuffer: 1 << 26 });
+      const frame = { width: json.width, data: r.stdout as Buffer };
+      const { x, y } = json.shadow.anchor;
+      const alpha = (px: number, py: number) => pixelAt(frame, Math.round(px), Math.round(py))[3];
+      expect(alpha(x - 20, y - 3)).toBeGreaterThan(8);
+      expect(alpha(x - 20, y - 3)).toBeLessThan(0.4 * 255 + 2);
+      expect(alpha(x, y - 12)).toBe(255);
+      expect(alpha(x - 26, y - 22)).toBe(0);
+    }, EXPORT_TIMEOUT_MS);
+
+    test("--shadow on a loop stands the shadow on its first frame's feet", () => {
+      const { json } = exported("flame-mp4-shadow", "flame", "--format", "mp4", "--shadow", "--shadow-shear=-0.5", "--shadow-opacity", "0.6");
+      expect(json.shadow).toMatchObject({ shear: -0.5, opacity: 0.6, from: "feet" });
+      expect(probeVideo(json.out).frames).toBe(36);
+      // Its own loop.webm is its deliverable: a shadowed one is another format.
+      const webm = run("export", join(json.character, "motions", "flame"), "--format", "webm", "--shadow", "--json");
+      expect(webm.code).toBe(1);
+      expect(webm.err).toMatch(/loop\.webm, without a shadow — a shadowed video of it is --format mov/);
+    }, EXPORT_TIMEOUT_MS);
+
+    test("aseprite --shadow adds a shadow sheet of its own, frame for frame, on the same foot", () => {
+      const { json } = exported("bounce-aseprite-shadow", "bounce", "--format", "aseprite", "--shadow");
+      const entries = readZip(readFileSync(json.out));
+      expect(entries.map((e) => e.name)).toEqual([
+        "bounce/bounce.png", "bounce/bounce.json", "bounce/bounce-shadow.png", "bounce/bounce-shadow.json",
+      ]);
+      const doc = JSON.parse(entries[1].data.toString("utf8"));
+      const shadowDoc = JSON.parse(entries[3].data.toString("utf8"));
+      // Its own tag name: Phaser's animations are global, so a shadow tag
+      // named like the motion would be refused as a duplicate.
+      expect(shadowDoc.meta).toMatchObject({ image: "bounce-shadow.png", frameTags: [{ name: "bounce-shadow", from: 0, to: 3, direction: "forward" }] });
+      const sheet = decoded(entries[2].data);
+      expect({ w: sheet.width, h: sheet.height }).toEqual(shadowDoc.meta.size);
+      for (let i = 0; i < 4; i++) {
+        const frame = shadowDoc.frames[String(i)];
+        expect(frame.duration).toBe(doc.frames[String(i)].duration);
+        // The anchor is where the feet are in the shadow frame: the shadow's
+        // mass lies above it (squash) and to its left (positive shear).
+        const ax = frame.frame.x + frame.anchor.x * frame.frame.w;
+        const ay = frame.frame.y + frame.anchor.y * frame.frame.h;
+        let sum = 0, sx = 0, sy = 0;
+        for (let y = frame.frame.y; y < frame.frame.y + frame.frame.h; y++) {
+          for (let x = frame.frame.x; x < frame.frame.x + frame.frame.w; x++) {
+            const a = pixelAt(sheet, x, y)[3];
+            sum += a; sx += a * (x + 0.5); sy += a * (y + 0.5);
+          }
+        }
+        expect(sum).toBeGreaterThan(0);
+        expect(sx / sum).toBeLessThan(ax);
+        expect(sy / sum).toBeLessThan(ay);
+      }
+      expect(json.shadow).toMatchObject({ squash: 0.25, shear: 0.8, opacity: 0.4, blur: 3, from: "atlas" });
+    }, EXPORT_TIMEOUT_MS);
+
+    test("the shadow flags: refused out of range or without --shadow, ignored where there is nothing to cast on", () => {
+      const dir = useCharacter();
+      const bounce = join(dir, "motions", "bounce");
+      const cases: Array<[string[], RegExp]> = [
+        [["--format", "mp4", "--shadow-shear", "2"], /--shadow-shear.*--shadow/],
+        [["--format", "mp4", "--shadow", "--shadow-squash", "2"], /--shadow-squash.*0\.001.*1/],
+        [["--format", "mp4", "--shadow", "--shadow-blur", "wide"], /--shadow-blur/],
+        [["--format", "mp4", "--shadow", "--shadow-color", "red"], /--shadow-color.*#rrggbb/],
+      ];
+      for (const [flags, message] of cases) {
+        const r = run("export", bounce, ...flags, "--json");
+        expect({ flags: flags.join(" "), code: r.code }).toEqual({ flags: flags.join(" "), code: 1 });
+        expect(r.err).toMatch(message);
+      }
+      expect(existsSync(join(bounce, "exports"))).toBe(false);
+      const apng = runJson("export", bounce, "--format", "apng", "--shadow");
+      expect(apng.shadow).toBeNull();
+      expect(apng.warnings.join(" ")).toMatch(/--shadow ignored/);
+    }, EXPORT_TIMEOUT_MS);
+
     test("the formats a loop already ships are refused and named, never duplicated", () => {
       const dir = useCharacter();
       for (const [format, existing] of [["webm", "loop.webm"], ["apng", "loop.apng"], ["lottie", "loop.json"]]) {
@@ -3143,7 +3626,7 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       const dir = useCharacter();
       const cases: Array<[string[], RegExp]> = [
         [["export", join(dir, "motions", "walk"), "--format", "mp4"], /walk.*not ready.*planned/],
-        [["export", join(dir, "motions", "bounce"), "--format", "avi"], /--format.*mp4, mov, webm, apng, lottie, png-seq/],
+        [["export", join(dir, "motions", "bounce"), "--format", "avi"], /--format.*mp4, mov, webm, apng, lottie, png-seq, aseprite/],
         [["export", join(dir, "motions", "bounce")], /--format is required/],
         [["export", join(dir, "motions", "bounce"), "--format", "mp4", "--scale", "1.5"], /--scale/],
         [["export", join(dir, "motions", "bounce"), "--format", "mp4", "--repeat", "0"], /--repeat/],
@@ -3503,6 +3986,18 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
 
       const forced = runJson("rive", dir, "--motions", "flame", "--max-size", "36", "--filter", "smooth", "--images", "png");
       expect(forced.resample).toMatchObject({ filter: "smooth", filterFrom: "flag" });
+
+      // `character.pixel` is the one authority (0.5.0): a character that
+      // carries it is pixel art whatever its style sentence says — the
+      // reading the viewer's Export tab makes, and now the script's too.
+      doc.sprite.character.style = "soft plush render";
+      doc.sprite.character.pixel = { logicalHeight: 32 };
+      writeFileSync(path, JSON.stringify(doc));
+      const declared = runJson("rive", dir, "--motions", "flame", "--max-size", "36");
+      expect(declared.resample).toMatchObject({ filter: "nearest", filterFrom: "pixel" });
+      expect(declared.images).toBe("webp-lossless");
+      expect(declared.notes.join(" ")).toMatch(/default for pixel art \(character\.pixel\)/);
+      expectSamePixels(asPng, declared);
     }, EXPORT_TIMEOUT_MS);
 
     test("the memory is counted after resampling; over 128 MB warns, over 768 MB refuses", () => {
@@ -3800,6 +4295,278 @@ describe.skipIf(!HAS_FFMPEG)("sprite-sheet.mjs", () => {
       expect(none.err).toMatch(/project\.json/);
       expect(existsSync(join(dir, "exports"))).toBe(false);
     });
+  });
+
+  describe("mirror", () => {
+    const TIMEOUT_MS = 60_000;
+    /**
+     * `walk-right`: the prop sheet (a body square, and a bar jutting to the
+     * right in frames 01 and 03), facing right and registered; `walk-left`
+     * declared as its mirror, not yet made.
+     */
+    const mirrorable = () => stage("character-mirror", (dir) => {
+      const summary = runJson("run", SHEETS.prop(), "--rows", "1", "--cols", "4",
+        "--out", join(dir, "motions", "walk-right"), "--name", "walk-right", "--fps", "8", "--loop", "--no-webp");
+      writeFileSync(join(dir, "motions", "walk-right", "run.json"), JSON.stringify(summary));
+      projectCmd(dir, "init", "--name", "Pip", "--cell", "64x64", "--facing", "right");
+      projectCmd(dir, "add-motion", "--id", "walk-right", "--rows", "1", "--cols", "4", "--fps", "8", "--loop", "--direction", "right");
+      projectCmd(dir, "register-run", "--motion", "walk-right", "--run", join(dir, "motions", "walk-right", "run.json"), "--at", "1000");
+      projectCmd(dir, "add-motion", "--id", "walk-left", "--rows", "1", "--cols", "4", "--fps", "8", "--loop",
+        "--source", "mirror", "--direction", "left");
+    });
+    const useMirrorable = () => {
+      const dir = join(fresh(), "pip");
+      cpSync(mirrorable(), dir, { recursive: true });
+      return dir;
+    };
+    const mirror = (dir: string, ...flags: string[]) =>
+      runJson("mirror", join(dir, "motions", "walk-right"), "--name", "walk-left", ...flags);
+    const runFile = (dir: string, json: unknown) => {
+      const path = join(dir, "..", `mirror-${Math.random().toString(36).slice(2)}.json`);
+      writeFileSync(path, JSON.stringify(json));
+      return path;
+    };
+    const atlasOf = (dir: string, id: string) => JSON.parse(readFileSync(join(dir, "motions", id, "atlas.json"), "utf-8"));
+
+    test("flips every registered frame pixel for pixel, and finishes it like a run", () => {
+      const dir = useMirrorable();
+      const json = mirror(dir);
+      expect(json).toMatchObject({
+        name: "walk-left", source: "mirror", mirrorOf: "walk-right", direction: "left",
+        fps: 8, loop: true, anchor: "bottom", scale: 1, warnings: [],
+      });
+      // Nothing was forced, and the summary does not claim it was.
+      expect("force" in json).toBe(false);
+      expect(json.motionDir).toBe(join(dir, "motions", "walk-left"));
+      expect(json.frames).toEqual([0, 1, 2, 3].map((i) => join(dir, "motions", "walk-left", "frames", `0${i}.png`)));
+      for (const [i, path] of json.frames.entries()) {
+        const a = readRgba(readFileSync(join(dir, "motions", "walk-right", "frames", `0${i}.png`)));
+        const b = readRgba(readFileSync(path));
+        expect([b.width, b.height]).toEqual([a.width, a.height]);
+        let differing = 0;
+        for (let y = 0; y < a.height; y++) {
+          for (let x = 0; x < a.width; x++) {
+            const from = (y * a.width + x) * 4;
+            const to = (y * a.width + (a.width - 1 - x)) * 4;
+            if (a.data.readUInt32BE(from) !== b.data.readUInt32BE(to)) differing++;
+          }
+        }
+        expect({ frame: i, differing }).toEqual({ frame: i, differing: 0 });
+      }
+      // The bar that jutted right of the body now juts left of it.
+      const right = readBbox(join(dir, "motions", "walk-right", "frames", "01.png")).bbox!;
+      const left = readBbox(join(dir, "motions", "walk-left", "frames", "01.png")).bbox!;
+      expect(left.x).toBe(json.cell.width - (right.x + right.w));
+      // The source's pre-align cells, flipped beside the frames: inspect
+      // judges clipping on them, and reads the same numbers as the source.
+      expect(json.cells).toBe(join(dir, "motions", "walk-left", "cells"));
+      expect(readdirSync(json.cells).filter((f) => f.endsWith(".png"))).toHaveLength(4);
+      const source = JSON.parse(readFileSync(join(dir, "motions", "walk-right", "inspect.json"), "utf-8"));
+      expect(json.inspect).toMatchObject({ frameCount: 4, bodyDrift: source.bodyDrift, maxJump: source.maxJump, scaleDrift: source.scaleDrift });
+      // Packed, previewed and inspected the way run finishes a sheet.
+      const atlas = atlasOf(dir, "walk-left");
+      expect(atlas.animations["walk-left"]).toEqual(["walk-left_00", "walk-left_01", "walk-left_02", "walk-left_03"]);
+      expect(atlas.meta).toMatchObject({ fps: 8, loop: true, anchor: "bottom", scale: 1, size: atlasOf(dir, "walk-right").meta.size });
+      expect(existsSync(json.gif)).toBe(true);
+      expect(existsSync(join(dir, "motions", "walk-left", "inspect.json"))).toBe(true);
+    }, TIMEOUT_MS);
+
+    test("the anchor lands at width − x, off the source's atlas, with or without its align.json", () => {
+      const dir = useMirrorable();
+      // Move walk-right's anchor off the centre line and pack its atlas again,
+      // so the flip has something to move.
+      const frames = join(dir, "motions", "walk-right", "frames");
+      const record = JSON.parse(readFileSync(join(frames, "align.json"), "utf-8"));
+      const { width } = record.cell;
+      writeFileSync(join(frames, "align.json"), JSON.stringify({ ...record, anchorPoint: { x: 20, y: record.anchorPoint.y } }));
+      runJson("pack", frames, "--out", join(dir, "motions", "walk-right", "sheet.png"),
+        "--atlas", join(dir, "motions", "walk-right", "atlas.json"), "--name", "walk-right", "--fps", "8", "--loop");
+      expect(atlasOf(dir, "walk-right").meta.anchorPoint.x).toBe(20);
+
+      const json = mirror(dir);
+      const expected = { x: width - 20, y: record.anchorPoint.y };
+      expect(json.anchorPoint).toEqual(expected);
+      expect(json.pivot.x).toBeCloseTo((width - 20) / width, 4);
+      expect(json.inspect.anchorPoint).toEqual(expected);
+      const atlas = atlasOf(dir, "walk-left");
+      expect(atlas.meta.anchorPoint).toEqual(expected);
+      for (const frame of Object.values(atlas.frames) as any[]) expect(frame.pivot.x).toBeCloseTo((width - 20) / width, 4);
+      const flipped = JSON.parse(readFileSync(join(dir, "motions", "walk-left", "frames", "align.json"), "utf-8"));
+      // The source's record lends what pack does not read.
+      expect(flipped).toMatchObject({ anchorPoint: expected, pad: record.pad, xFrom: record.xFrom, mirrorOf: "walk-right" });
+
+      // A source whose align.json is gone (the seed ships none) still ships
+      // its point in the atlas — which is the authority, and is flipped.
+      rmSync(join(frames, "align.json"));
+      const again = mirror(dir);
+      expect(again.anchorPoint).toEqual(expected);
+      expect(JSON.parse(readFileSync(join(dir, "motions", "walk-left", "frames", "align.json"), "utf-8")))
+        .toMatchObject({ anchorPoint: expected, from: "atlas", mirrorOf: "walk-right" });
+    }, TIMEOUT_MS);
+
+    test("register-run takes the summary: frame i hangs off the source's frame i", () => {
+      const dir = useMirrorable();
+      const json = mirror(dir);
+      const motion = projectCmd(dir, "register-run", "--motion", "walk-left", "--run", runFile(dir, json));
+      expect(motion).toMatchObject({ source: "mirror", mirrorOf: "walk-right", direction: "left", status: "ready" });
+      expect(motion.frames).toEqual(["walk-left-frame-00", "walk-left-frame-01", "walk-left-frame-02", "walk-left-frame-03"]);
+      const doc = JSON.parse(readFileSync(join(dir, "project.json"), "utf-8"));
+      const edge = doc.provenance.find((e: any) => e.toAssetId === "walk-left-frame-02");
+      expect(edge.fromAssetId).toBe("walk-right-frame-02");
+      expect(edge.operation.params).toMatchObject({ step: "mirror", frameIndex: 2 });
+      expect(doc.assets.find((a: any) => a.id === "walk-left-atlas").uri).toBe("motions/walk-left/atlas.json");
+    }, TIMEOUT_MS);
+
+    test("an asymmetric character is refused with its sentence, unless --force", () => {
+      const dir = useMirrorable();
+      const sentence = "the lantern is always in her left hand";
+      projectCmd(dir, "set-character", "--asymmetric", sentence);
+      const refused = run("mirror", join(dir, "motions", "walk-right"), "--name", "walk-left", "--json");
+      expect(refused.code).toBe(1);
+      expect(refused.err).toContain(`"${sentence}"`);
+      expect(refused.err).toMatch(/--force/);
+      expect(refused.out).toBe("");
+      expect(existsSync(join(dir, "motions", "walk-left"))).toBe(false);
+
+      const forced = mirror(dir, "--force");
+      expect(forced.asymmetric).toBe(sentence);
+      expect(forced.warnings).toContainEqual(expect.stringContaining(`"${sentence}"`));
+      // The summary says it was forced — the one thing register-run takes as
+      // leave to flip an asymmetric character — and without it the same
+      // summary is refused, so the lock holds end to end.
+      expect(forced.force).toBe(true);
+      const { force: _forced, ...unforced } = forced;
+      expect(() => projectCmd(dir, "register-run", "--motion", "walk-left", "--run", runFile(dir, unforced)))
+        .toThrow(/Pip is asymmetric .* force: true/);
+      expect(projectCmd(dir, "register-run", "--motion", "walk-left", "--run", runFile(dir, forced)).status).toBe("ready");
+    }, TIMEOUT_MS);
+
+    test("refuses by name what it cannot flip, and writes nothing when it does", () => {
+      const dir = useMirrorable();
+      const source = join(dir, "motions", "walk-right");
+      for (const [argv, pattern] of [
+        [[join(dir, "motions", "nope"), "--name", "x"], /no motion 'nope'.*walk-right, walk-left/],
+        [[join(dir, "motions", "walk-left"), "--name", "x"], /'walk-left' is declared a mirror/],
+        [[source, "--name", "walk-right"], /--name walk-right is the motion being flipped/],
+        [[source, "--name", "x", "--out", source], /where walk-right's frames live/],
+        [[source], /--name is required/],
+      ] as const) {
+        const r = run("mirror", ...argv, "--json");
+        expect({ argv, code: r.code, matches: pattern.test(r.err) }).toEqual({ argv, code: 1, matches: true });
+      }
+      projectCmd(dir, "add-motion", "--id", "jump-right", "--rows", "1", "--cols", "4", "--fps", "8", "--direction", "right");
+      const planned = run("mirror", join(dir, "motions", "jump-right"), "--name", "jump-left", "--json");
+      expect(planned.err).toMatch(/'jump-right' is planned, not ready — finish it before mirroring it/);
+      projectCmd(dir, "set-motion", "--motion", "walk-right", "--direction", "front");
+      const front = run("mirror", source, "--name", "walk-back", "--json");
+      expect(front.code).toBe(1);
+      expect(front.err).toMatch(/faces front — a mirror flips one side into the other/);
+      expect(existsSync(join(dir, "motions", "walk-back"))).toBe(false);
+      expect(existsSync(join(dir, "motions", "x"))).toBe(false);
+    }, TIMEOUT_MS);
+
+    test("a .riv draws a mirror from its source's images, flipped, and embeds none of its own", () => {
+      const dir = useMirrorable();
+      projectCmd(dir, "register-run", "--motion", "walk-left", "--run", runFile(dir, mirror(dir)), "--at", "2000");
+      const json = runJson("rive", dir, "--images", "png");
+      const [right, left] = json.motions;
+      expect(left).toMatchObject({ id: "walk-left", shares: "walk-right", mirrored: true, frames: 4, estimatedDecodeBytes: 0 });
+      expect(json.frameCount).toBe(4);
+      expect(json.estimatedDecodeBytes).toBe(right.estimatedDecodeBytes);
+      expect(json.notes).toContain("walk-left: walk-right's 4 images flipped — nothing more embedded");
+      // Stood where the flipped frames stand: the pivot at width − x.
+      expect(left.anchor.x).toBeCloseTo(right.source.width - right.anchor.x, 2);
+
+      const riv = decodeRiv(readFileSync(json.out));
+      const assets = riv.objects.filter((o) => o.type === "ImageAsset");
+      const images = riv.objects.filter((o) => o.type === "Image");
+      expect(assets).toHaveLength(4);
+      expect(images).toHaveLength(8);
+      const [own, flipped] = [images.slice(0, 4), images.slice(4)];
+      for (const [i, image] of flipped.entries()) {
+        // The same asset and origin as the source frame, drawn with scaleX −1:
+        // the flipped frame, standing on its pivot at width − x.
+        expect(image.props).toMatchObject({
+          name: `walk-left_0${i}`, assetId: own[i].props.assetId, scaleX: -1,
+          originX: own[i].props.originX, originY: own[i].props.originY,
+        });
+        expect(own[i].props.scaleX).toBeUndefined();
+      }
+      // walk-left's timeline keys the flipped Images (components 2 + 4 + i).
+      const keyed = riv.objects.filter((o) => o.type === "KeyFrameId").map((o) => o.props.value);
+      expect(keyed.slice(4)).toEqual([6, 7, 8, 9]);
+      // One authority for the memory: the Export tab quotes the same plan.
+      const planned = rivePlanFor(loadRoster([
+        { path: "pip/project.json", content: readFileSync(join(dir, "project.json"), "utf-8") },
+      ])!.byContentSet.pip)!;
+      expect(planned.decodeBytes).toBe(json.estimatedDecodeBytes);
+      expect(planned.motions.map((m) => [m.id, m.shares ?? null, m.mirrored ?? false])).toEqual([
+        ["walk-right", null, false], ["walk-left", "walk-right", true],
+      ]);
+    }, TIMEOUT_MS);
+
+    test("a mirror of an earlier run keeps its own frames, and says so", () => {
+      const dir = useMirrorable();
+      projectCmd(dir, "register-run", "--motion", "walk-left", "--run", runFile(dir, mirror(dir)), "--at", "2000");
+      // walk-right run and registered again after it was mirrored.
+      const again = runJson("run", SHEETS.prop(), "--rows", "1", "--cols", "4",
+        "--out", join(dir, "motions", "walk-right"), "--name", "walk-right", "--fps", "8", "--loop", "--no-webp");
+      projectCmd(dir, "register-run", "--motion", "walk-right", "--run", runFile(dir, again), "--at", "3000");
+      const json = runJson("rive", dir, "--images", "png");
+      const left = json.motions.find((m: any) => m.id === "walk-left");
+      expect(left.shares).toBeUndefined();
+      expect(left.estimatedDecodeBytes).toBeGreaterThan(0);
+      expect(json.frameCount).toBe(8);
+      // The exact command, the way register-run's note names it: the source
+      // motion's folder and the mirror's id, not a bare "mirror it again".
+      expect(json.warnings).toContain("walk-left flips an earlier run of walk-right — it goes in with its own frames; mirror it again from <character>/motions/walk-right ('sprite-sheet.mjs mirror <character>/motions/walk-right --name walk-left') and register it to draw it from walk-right's images");
+      const planned = rivePlanFor(loadRoster([
+        { path: "pip/project.json", content: readFileSync(join(dir, "project.json"), "utf-8") },
+      ])!.byContentSet.pip)!;
+      expect(planned.decodeBytes).toBe(json.estimatedDecodeBytes);
+    }, TIMEOUT_MS);
+
+    test("a whole-character Aseprite export ships a mirror as a motion of its own: its frames, its anchor", () => {
+      const dir = useMirrorable();
+      // walk-right's anchor off the centre line, so the flip has something to move.
+      const frames = join(dir, "motions", "walk-right", "frames");
+      const record = JSON.parse(readFileSync(join(frames, "align.json"), "utf-8"));
+      const { width } = record.cell;
+      writeFileSync(join(frames, "align.json"), JSON.stringify({ ...record, anchorPoint: { x: 20, y: record.anchorPoint.y } }));
+      runJson("pack", frames, "--out", join(dir, "motions", "walk-right", "sheet.png"),
+        "--atlas", join(dir, "motions", "walk-right", "atlas.json"), "--name", "walk-right", "--fps", "8", "--loop");
+      projectCmd(dir, "register-run", "--motion", "walk-left", "--run", runFile(dir, mirror(dir)), "--at", "2000");
+
+      const json = runJson("export", dir, "--format", "aseprite");
+      expect(json.motions.map((m: any) => m.id)).toEqual(["walk-right", "walk-left"]);
+      expect(json.excluded).toEqual([]);
+      // Hung off every frame on the sheet — the mirror's own included.
+      expect(json.frames).toEqual([
+        ...[0, 1, 2, 3].map((i) => join(dir, "motions", "walk-right", "frames", `0${i}.png`)),
+        ...[0, 1, 2, 3].map((i) => join(dir, "motions", "walk-left", "frames", `0${i}.png`)),
+      ]);
+      const entries = readZip(readFileSync(json.out));
+      const doc = JSON.parse(entries.find((e) => e.name.endsWith(".json"))!.data.toString("utf8"));
+      expect(doc.meta.frameTags.map((t: any) => [t.name, t.from, t.to])).toEqual([["walk-right", 0, 3], ["walk-left", 4, 7]]);
+      for (let i = 0; i < 4; i++) {
+        const right = doc.frames[String(i)];
+        const left = doc.frames[String(4 + i)];
+        // Each tag stands on its own atlas's pivot: the mirror's is width − x.
+        expect(right.anchor.x).toBeCloseTo(20 / width, 4);
+        expect(left.anchor.x).toBeCloseTo((width - 20) / width, 4);
+        expect(left.anchor.y).toBeCloseTo(right.anchor.y, 4);
+        // Its own frames, on its own sheet stacked below the source's.
+        expect(left.frame.y).toBeGreaterThanOrEqual(right.frame.y + right.frame.h);
+      }
+    }, TIMEOUT_MS);
+
+    test("rive reads character.pixel before the style sentence", () => {
+      const dir = useMirrorable();
+      projectCmd(dir, "set-character", "--style", "Soft painted storybook look", "--pixel", "32");
+      const json = runJson("rive", dir, "--max-size", "32");
+      expect(json.images).toBe("webp-lossless");
+      expect(json.resample.filter).toBe("nearest");
+    }, TIMEOUT_MS);
   });
 
   test("cleanup", () => {

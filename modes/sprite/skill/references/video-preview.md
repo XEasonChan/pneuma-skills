@@ -6,8 +6,8 @@ A clip does four jobs in this mode, and they are not the same job.
    into frames by `sprite-sheet.mjs from-video`, keyed, cleaned, aligned and
    packed exactly like a sheet's cells. This is the smoother of the two
    sources — the model draws the in-betweens — and it is what a walk, a run or
-   an attack should be built from. It costs about a dollar and several minutes
-   per motion.
+   an attack should be built from. It costs ≈ $0.83 (a 4 s 480p take) and
+   several minutes per motion.
 2. **A preview.** A clip rendered *from* finished frames, so the user can feel
    the motion. That clip is never sampled back into frames.
 3. **A seamless loop.** A clip shot first-last with the same image at both
@@ -115,7 +115,10 @@ node {SKILL_PATH}/scripts/seedance-video.mjs \
 | `--json` | flag | | one JSON object on stdout |
 
 `--json` returns `{ path, url, file_size, model, endpoint, requested_duration,
-resolution, seed? }`. Local files are converted to data URIs; anything over
+resolution, seed?, request_id?, cost }`. `cost` is an estimate by fal's
+published formula applied to the clip that landed (`usd`, `tokens`, `width`,
+`height`, `duration`), never an invoice; the same figure goes to stderr as
+one `cost:` line — quote that line to the user after the take. Local files are converted to data URIs; anything over
 30 MB is refused with a clear message (a 480p 4 s clip and a 2048×2048
 reference are both far under it).
 
@@ -153,14 +156,15 @@ fal's pricing page before promising a user a figure.
 
 | Model / setting | Cost | Wall time |
 |---|---|---|
-| Seedance 2.5 i2v, 480p | ≈ $0.22 per second of output | — |
-| Seedance 2.5 i2v, 720p | ≈ $0.47 per second of output | — |
+| Seedance 2.5, 480p / 720p | $0.0214 per 1000 tokens; tokens ≈ width × height × seconds × 24 / 1024 of the clip that lands — a 640×640 480p square: ≈ $0.83 for 4 s, ≈ $1.0 for 5 s | 140–400 s for 4 s (632 s seen) |
+| Seedance 2.5, 1080p | ≈ $0.0234 per 1000 tokens | — |
 | H3 Max r2v, 480P, 7 s shot | — | ≈ 14 s (≈ 18 s with a voice reference) |
 | H3 Max i2v, 480P, 7 s shot | — | ≈ 28 s |
 | H3 Max t2v, 480P | — | ≈ 2–3 s on a quiet queue; reference analysis dominates r2v |
 
-So a 4-second 480p Seedance preview is roughly a dollar. Render one per motion
-by default; ask before rendering a set.
+So a 4-second 480p Seedance preview is ≈ $0.83 (fal's pricing read
+2026-09-27; video references bill at 0.6× plus their own duration). Render one
+per motion by default; ask before rendering a set.
 
 480p / 480P is the right default for a sprite preview. Go to 720p / 768P only
 when the user asks for a keepsake.
@@ -173,7 +177,7 @@ model will not do any of them unless asked:
 
 | Requirement | Why the pipeline needs it |
 |---|---|
-| Flat solid pure chroma green (#00FF00) filling the frame, evenly lit | `from-video --key auto` reads the corner patches of frame 00; a gradient or a vignette leaves the plate half-keyed |
+| Flat solid pure chroma green (#00FF00) filling the frame, evenly lit | `from-video --key auto` measures the plate on the frame borders; a gradient or a vignette leaves the plate half-keyed |
 | No floor, no cast shadow, no reflection, no green spill on the character | A shadow keys as part of the silhouette; spill turns the character's edge green |
 | Locked-off camera — no pan, no tilt, no zoom, no parallax, no cut | Every camera move is read as the character moving, and the aligner faithfully removes it |
 | Whole character and props inside the frame with margin, consistent proportions and camera scale | Crouching or turning may change silhouette dimensions; clipping and unintended rescaling are faults |
@@ -199,33 +203,112 @@ when the action needs travel preserved in the exported frames.
 For a non-looping motion, use `--no-loop` when sampling and name the end pose
 in the prompt. The worked idle below is one grounded-loop example.
 
-The `--image` is the character on that same green plate: take a reference (or
-frame 00 of an existing motion) and `sprite-sheet.mjs flatten --bg "#00ff00"`
-it, so the first frame the model extends already has the background the prompt
-asks for. The worked call, end to end:
+The `--image` is the character on that same green plate: take something
+already cut out (frame 00 of an existing motion, or a reference run through
+`remove-background.mjs`) and `sprite-sheet.mjs flatten --bg "#00ff00"` it, so
+the first frame the model extends already has the background the prompt asks
+for — with `--room` for a jump, an attack or a wave (`pipeline.md` →
+`flatten`). The worked call, end to end — an idle, so its first frame is
+pinned (the next section):
 
 ```bash
-node {SKILL_PATH}/scripts/sprite-sheet.mjs flatten <character>/refs/portrait.png \
+node {SKILL_PATH}/scripts/sprite-sheet.mjs flatten <character>/motions/attack/frames/00.png \
   --out <character>/motions/<id>/first-green.png --bg "#00ff00" --json
 
 node {SKILL_PATH}/scripts/seedance-video.mjs \
   --prompt "One continuous idle loop of the character. The camera is locked off: no pan, no tilt, no zoom, no parallax, no cut. The character stays centred and fully inside the frame at a constant size, planted on one fixed baseline — no walking, no turning, no stepping toward or away from the camera. The motion: the chest and shoulders rise and fall once in one slow breath, the hair and the cloak trail a beat behind, the paper lantern beside her sways gently, and she blinks once. The background is a flat solid pure chroma green filling the whole frame, evenly lit, no gradient, no floor, no cast shadow, no reflection, and no green light spilling onto the character. The final frame returns to the opening pose so the loop closes seamlessly." \
   --image <character>/motions/<id>/first-green.png \
+  --end-image <character>/motions/<id>/first-green.png \
   --duration 4 --resolution 480p --no-audio \
   --output <character>/motions/<id>/video-seedance-1.mp4 --json
 
+node {SKILL_PATH}/scripts/sprite-sheet.mjs contact \
+  <character>/motions/<id>/video-seedance-1.mp4 \
+  --out <character>/motions/<id>/contact.png --json
+
 node {SKILL_PATH}/scripts/sprite-sheet.mjs from-video \
   <character>/motions/<id>/video-seedance-1.mp4 \
-  --out <character>/motions/<id> --name <id> --frames 16 --loop --json \
+  --out <character>/motions/<id> --name <id> \
+  --trim-start <the window contact reported> --trim-end <…> --frames 12 --loop --json \
   > <character>/motions/<id>/run.json
 ```
 
-Only a reference that already shows the whole character can be flattened
-straight to green. A reference with a white plate is white *inside* the
-character too (eye whites, a cream cloak), so keying the white first would
-punch holes in it — flatten an existing motion's `frames/00.png`, which is
-already cut out, or accept the white plate and let the model repaint the
-background from the prompt.
+A pinned idle usually reads **no cycle** on `contact` (it drifts from its
+first frame and back once): sample `stillStart`–`stillEnd`, or the one-shot
+window it reports (*Look before you sample*, below).
+
+Never flatten a reference with a white plate: it is white *inside* the
+character too (eye whites, a cream cloak), and nothing keys that white
+without punching holes in the character. Cut it out first
+(`remove-background.mjs`), or use an existing motion's `frames/00.png`.
+
+## Motion sentences per state, and pinning the first frame
+
+The template's `[the motion]` is yours to write. For the common states,
+start from these sentences — the state lines of aldegad/sprite-gen's video
+batch (`sprite_gen/video/batch.py`@fbd1a08, `MOTION_TEXT`, `HOLD_TEXT`,
+`ACTION_COMMON_TEXT`, `PINNED_LOOP_TEXT`; Apache-2.0, text ported), settled
+there on Grok clips. Each reads after "The character …":
+
+| State | Sentence | What the wording is for |
+|---|---|---|
+| walk | moves in place on a treadmill: a steady locomotion cycle for this body type with clear repeating ground contacts and an even left-right or front-back rhythm the body already has. | Names no limbs: "this body type" fits a biped, a quadruped or a plush with stubs. "Treadmill" keeps it in place |
+| run | moves in place on a treadmill: a fast locomotion cycle for this body type with a bounding rhythm and clear repeating ground contacts. | Same |
+| idle | stands still in a relaxed idle pose with both feet planted flat on the ground for the whole clip: slow, gentle breathing that softly rises and falls in the chest and shoulders, a slight settle of the arms, hair and loose cloth, and one natural blink if the face has eyes. The feet never lift, step, shuffle or slide — no walking, no marching in place, no turning. | Upstream found a full body asked for "a subtle weight sway" steps in place more often than not, so the feet are held and walking is named |
+| attack | performs one melee attack with what it is already holding (bare hands only if it holds nothing), keeping every piece of its gear and outfit exactly as drawn: a windup (about 0.5 s), one clean strike in front (about 0.25 s), a held impact pose (about 0.3 s), then a recovery to the exact starting stance (about 0.5 s). Every grip stays exactly as shown in the image: one hand stays one hand, both hands stay both hands, and nothing is let go or switched to the other hand. A hand the motion does not use stays where it is drawn, with anything it holds, and the body keeps facing the same direction without turning. | Timed phases, and grips that survive the swing |
+| jump | performs one clean vertical jump in place: a short crouch, springs straight up about half its body height, lands softly on the same spot, returns to the exact starting stance, and then stands still. | Ours — upstream asks for hops "over and over" at an even rhythm; this asks for one (see E4: it did not get one) |
+
+For attack-like actions add "Crisp, clean frames with no motion blur, no
+smears and no afterimages." — a fast strike is where a video model smears.
+
+**Pin the first frame for idle and attack** (upstream's
+`PIN_LAST_FRAME_STATES`): shoot first-last with the **same** image as
+`--image` and `--end-image`, and end the prompt with "The last frame returns
+to the exact pose of the first frame." The model then has to come back to the
+still, which closes a one-shot attack on its ready stance instead of wherever
+the strike ended, and closes an idle without asking for a rhythm. It is the
+seamless-loop mechanism below, used for a sprite motion. The whole clip is one
+performance: sample the window `contact` reports, not a cycle inside it.
+
+```bash
+node {SKILL_PATH}/scripts/seedance-video.mjs \
+  --prompt "2D game sprite animation. The character performs one melee attack with the paper lantern she is already holding, … then a recovery to the exact starting stance (about 0.5 s). Every grip stays exactly as shown in the image: … She keeps facing right without turning, stays at the same spot and does not move across the screen; the body, hair and lantern always stay fully inside the frame with margin. Camera completely locked: no pan, no tilt, no zoom, no parallax, no reframing, no cut. Keep the design, colors and proportions exactly as in the image. Crisp, clean frames with no motion blur, no smears and no afterimages. The background stays a flat solid pure chroma-key green fill for the whole clip, evenly lit, no gradient: no floor, no ground line, no shadows, no reflection, no particles, no lighting changes, no effects, and no green light spilling onto the character. The last frame returns to the exact pose of the first frame." \
+  --image <character>/motions/<id>/first-green.png \
+  --end-image <character>/motions/<id>/first-green.png \
+  --duration 4 --resolution 480p --no-audio \
+  --output <character>/motions/<id>/video-seedance-1.mp4 --json
+```
+
+### Measured: the templates on Seedance 2.5 (Lumi, 2026-09-27)
+
+Three 4 s 480p clips shot with these sentences (wave 2: E3 walk, E4 jump, E5
+attack), each measured frame by frame.
+
+| Clip | Asked | Got |
+|---|---|---|
+| E3 side walk, i2v, treadmill sentence | an in-place cycle | `contact` found one: loop 1.5–2.833 s, period 1.333 s, seam 0.0069 against a step of 0.0867; moving from 0.167 s |
+| E4 jump, i2v, tight (8 px pad, character 98 % of the frame) | one jump, in frame | two hops; 53 of 97 frames touch an edge, the head cut off for 38 frames (1.00–2.54 s) |
+| E4 jump, i2v, roomy (3:4 canvas, 34 % headroom) | one jump, in frame | two hops; no frame touches an edge (24 px least headroom), feet rise 192 px |
+| E5 attack, first-last, same image both ends | return to the first frame | **yes**: last vs first silhouette 0.0078, under the clip's median step 0.0096 (RGBA 0.0017) |
+| E5 | windup ≈ 0.5 s | a 0.8 s wind-up, then a 0.63 s hold (frames 19–34) before the strike |
+| E5 | strike ≈ 0.25 s | peak change at 1.54 s (frame 37) |
+| E5 | impact held ≈ 0.3 s | held **0.833 s** (frames 47–67) |
+| E5 | recovery ≈ 0.5 s, then stand still | ≈ 0.5 s, then 0.5 s still (frames 84–96) — the stillness was asked for |
+| E5 | no smears | a smear arc on the lantern at frames 38–39 |
+| E5 | the image's colours | the whole clip darker from frame 0 (R −18, B −11) |
+
+What the templates do on Seedance: the first-last pin brings a one-shot back
+to its first frame, the treadmill sentence gives an in-place walk with a
+clean cycle, and room in the first frame keeps a jump inside it. What they do
+not do: **timing words** — Seedance's shortest clip is 4 s (upstream's
+attack clip is 2 s, on Grok), and the spare seconds became holds before and
+after the strike; cut them afterwards (`contact`'s `stillStart`–`stillEnd`
+window, or `retime --keep` to shorten a hold), because a re-shot prompt buys
+the same model. **"One jump"** — both jump clips hopped twice; sample one hop
+from the contact sheet with `--at`. **"No smears"** — two smear frames came
+anyway; drop them with `retime` or accept them at sprite size. The darkening
+is unaddressed by any wording; compare the clip's frames with a sheet motion's
+before you promise the two match.
 
 ## Bookkeeping around the call
 
@@ -279,7 +362,7 @@ the camera, the scale and the return:
 
 The last sentence is not a formality — it is what turns a four-second
 performance into a cycle, and it is the one clause worth re-reading before you
-spend the dollar. **Ask for the settle, not just the return**: on the measured
+pay for the take. **Ask for the settle, not just the return**: on the measured
 clip below Seedance spent its final three frames hurrying back to the keyframe,
 at about twice the median step, which reads as a flinch right where the loop
 joins. Two beats need five seconds; one needs four.
@@ -299,8 +382,9 @@ node {SKILL_PATH}/scripts/seedance-video.mjs \
   --output <character>/motions/<id>/video-seedance-1.mp4 --json
 ```
 
-Cost is the same tier as any Seedance clip — ≈ $0.22 per second of 480p
-output, so ≈ $0.9 for four seconds and ≈ $1.1 for five. Flatten onto pure green
+Cost is the same as any Seedance clip — ≈ $0.83 for four seconds of 480p
+square output and ≈ $1.0 for five; the script's `cost:` line says what this
+one came to. Flatten onto pure green
 rather than a neutral: the whole point of the plate is that `loop --key auto`
 can measure and remove it.
 
@@ -347,7 +431,7 @@ node {SKILL_PATH}/scripts/seedance-video.mjs \
   --output <character>/motions/idle-to-coffee/video-seedance-1.mp4 --json
 ```
 
-Price it like any take — ≈ $1.1 at 4 s and 480p, plus ≈ $0.06 for the
+Price it like any take — ≈ $0.83 at 4 s and 480p, plus ≈ $0.06 for the
 `veed-gs` matte. No interpolation: the `.riv` plays at 24 fps, which is the
 rate the take already has. Only the entries are shot; each exit is its entry
 played backwards (`transition --reverse-of`), free. When a reverse reads wrong
@@ -369,7 +453,7 @@ breathing — both takes showed all three:
 
 The prompt in the template above already says *the body is never still* and
 *a single smooth sine-wave breath with no pause at the top*. Both takes froze
-anyway. Re-shooting is $1.1 that buys the same three defects, which is why step
+anyway. Re-shooting is ≈ $1.0 that buys the same three defects, which is why step
 6b exists and why a second take is a decision to put to the user rather than a
 correction to make.
 
@@ -381,10 +465,13 @@ frame 112 back to frame 2 rather than the keyframe on both sides.
 
 ### Matting the clip: `remove-video-background.mjs`
 
-The colour key that `loop` applies by default is free and good on a flat plate,
-but it cuts by colour distance, so a soft 3D edge keeps a green rim. The two
-paid alternatives cut on the silhouette and hand back a clip that *carries*
-alpha, which `loop --key alpha` then decodes instead of keying.
+The colour key that `loop` applies by default is free and good on a flat plate:
+since 2026-09-27 it un-mixes the edge (`--keyer unmix`), where the previous
+`colorkey` left a green rim on a soft 3D edge. It still cuts by colour, so it
+cannot separate a subject from a plate it shares colours with, and a
+translucent effect (smoke, glow) keeps the plate showing through. The two paid
+alternatives cut on the silhouette and hand back a clip that *carries* alpha,
+which `loop --key alpha` then decodes instead of keying.
 
 ```bash
 node {SKILL_PATH}/scripts/remove-video-background.mjs \
@@ -546,7 +633,7 @@ post-processing path run against it.
 |---|---|---|---|
 | keyframe (GPT Image, 1024², `--quality high`) | **29 s** | $0.05 | one flame on white |
 | `remove-background.mjs --model heavy --resolution 1024` | **6 s** | | the cut-out |
-| clip, first-last, same image both ends (`--duration 5 --resolution 480p --no-audio`) | **199 s** (3 min 19 s) | ≈ $1.1 | 640×640, h264, 24 fps, **121 frames**, 5.04 s, 366 KB |
+| clip, first-last, same image both ends (`--duration 5 --resolution 480p --no-audio`) | **199 s** (3 min 19 s) | ≈ $1.0 | 640×640, h264, 24 fps, **121 frames**, 5.04 s, 366 KB |
 | `remove-video-background.mjs --model veed` | **22.6 s** (17 s inference) | ≈ $0.09 | VP9 webm carrying alpha |
 | `remove-video-background.mjs --model veed-gs` | **30 s** (18.7 s inference) | ≈ $0.06 | 617 KB VP9 webm, `ALPHA_MODE=1`, zero green pixels |
 | `interpolate-video.mjs --target-fps 60 --upscale 1` (Topaz) | **49 s** (43 s inference) | ≈ $0.10 | 300 frames, 4.3 MB h264, the green plate kept |
@@ -560,17 +647,22 @@ post-processing path run against it.
 |---|---|---|
 | `veed-gs` matte → `loop --key alpha` | ≈ $0.06 | **the best of the four** — zero green pixels, and the softest edge measured: 8535 partial-alpha pixels on the frame where plain `veed` has 6198 |
 | `veed` matte → `loop --key alpha` | ≈ $0.09 | soft, zero green pixels, no dark rim |
-| `loop --key auto` (colorkey **then** despill) | free | acceptable: a faint 1 px dark rim |
-| colorkey with `--no-despill` | free | **not acceptable** — a visible 1–2 px green fringe at 640² |
+| `loop --key auto` (default `--keyer unmix`, since 2026-09-27) | free | no green rim and no dark rim, body colours untouched — measured on tanka's ten loops, not yet side by side with `veed-gs` on this clip (`pipeline.md` → "Measured: the chroma keyer") |
+| `loop --key auto --keyer colorkey` (colorkey **then** despill) | free | a faint 1 px dark rim — and despill takes a fifth of the green out of every neutral pixel: white comes out pink, yellow salmon |
+| `--keyer colorkey --no-despill` | free | **not acceptable** — a visible 1–2 px green fringe at 640² |
 
 So: **with a fal key, matte and cut with `loop --key alpha` — `veed-gs` when
 the clip was shot on chroma green (which workflow E's is), `veed` for any other
-plate; without a key, `loop --key auto` and its despill**, which is honest at
-UI size. Never ship a chroma-plate loop keyed with `--no-despill` — a loop is
-rendered at the size it was cut at, so there is no downscale further along to
-hide the fringe the way a sprite motion has.
+plate; without a key, `loop --key auto`**, which un-mixes the plate out of the
+edge. Never ship a chroma-plate loop keyed with plain colorkey
+(`--keyer colorkey --no-despill`) — a loop is rendered at the size it was cut
+at, so there is no downscale further along to hide the fringe the way a sprite
+motion has.
 
-**Seam, as a worked verdict.** `loop` measured the Seedance clip at seam
+**Seam, as a worked verdict.** (These seams, and the table below, were
+measured in silhouette units before 2026-09-27; `loop` now measures colour —
+*Measured: cycle analysis* below — so today's numbers differ, while the rule,
+seam against its limit, is the same.) `loop` measured the Seedance clip at seam
 **0.028** against a median step of **0.046** — the last frame is closer to the
 first than a normal frame is to its neighbour, which is a loop that closes. The
 Topaz 60 fps version of the same clip came back at seam **0.067** against a step
@@ -652,7 +744,7 @@ shot with the template above and sampled with `from-video --frames 16 --loop`:
 | clip | 640×640, 24 fps, 97 frames, 4.04 s, 552 KB, `--duration 4 --resolution 480p --no-audio` |
 | the plate the model actually painted | `#08f00d` — near the #00FF00 asked for, not equal to it, which is why `--key auto` measures it instead of assuming |
 | alpha coverage after keying | **0.4438** (the character is 44 % of the frame; the plate is gone) |
-| green fringe | a **1 px** dark-green rim on the silhouette — 2.8 % of the sprite's opaque pixels. It is the anti-aliased ramp between the plate and the black ink outline, so no similarity setting reaches it without eating the drawing. It disappears under `pack --scale 0.5` and is invisible at sprite size |
+| green fringe | a **1 px** dark-green rim on the silhouette — 2.8 % of the sprite's opaque pixels. It is the anti-aliased ramp between the plate and the black ink outline, so no similarity setting reaches it without eating the drawing. It disappears under `pack --scale 0.5` and is invisible at sprite size. *Measured with the `colorkey` keyer this run used; since 2026-09-27 the default `--keyer unmix` un-mixes that ramp instead (tanka's walk: `keyResidue` 0.0158 → 0; `pipeline.md` → "Measured: the chroma keyer")* |
 | `bodyDrift` | **0.343 px** on a 622 px cell — 0.06 % of the cell, against a 5 % warning threshold |
 | `anchorDrift` | x 2.921 px, y 0 |
 | `maxJump` | 3 px (threshold: 8 % of 622 = 50 px) |
@@ -730,9 +822,12 @@ frame-to-frame change — that is what a loop that closes looks like in
 numbers, and it is the check to make before promising a seamless loop.
 The table above is that window, sampled with the flags step 7 gives.
 
-So, for a clip: shoot it, `contact` it, sample `loops[0]` (a loop) or
-`stillStart`–`stillEnd` (a one-shot) with the frame budget from the SKILL's
-step 1 table, and only then `from-video`. When the beats are not evenly
+So, for a clip: shoot it, `contact` it, sample `loops[0]` (a loop), a
+`oneShots[]` window (an action that leaves its rest pose and returns), or
+`stillStart`–`stillEnd` (an action that ends somewhere else) with the frame
+budget from the SKILL's step 1 table, and only then `from-video`. When
+`cycle.verdict` is `none`, `loops[]` is empty on purpose — the clip does not
+repeat (see "Measured: cycle analysis" below). When the beats are not evenly
 spaced, read the times off the contact sheet and pass them as `--at`.
 
 ## Measured: the documented walk workflow on Lumi (2026-09-14)
@@ -761,3 +856,79 @@ pose, prompt or no prompt.
 Same lesson as the fox clip, with the cleaner outcome a clip shot the way
 this page asks for gives: the window `contact` finds is the animation; the
 footage around it is not.
+
+## Measured: cycle analysis (2026-09-27)
+
+`contact`'s cycle reading and `loop`'s seam were rebuilt on a port of
+aldegad/sprite-gen's `video-loop` analysis (`scripts/cycle.mjs`; `pipeline.md`
+has the rules): colour instead of silhouette, every frame at the clip's own
+rate instead of 12 fps, the whole-clip lag profile instead of best-single-seam,
+a no-cycle verdict, one-shots, and a 0.005 noise floor under `seam ≤ 2·step`.
+Before = the scripts at `2831b7d2`, after = this change, same copies of the
+clips (inputs copied, never the owner's files), measured with a script
+that stayed on the development machine.
+
+**`contact`, before → after.** tanka: Seedance 2.5, 640², 24 fps, 97–121
+frames, chroma green. Lumi attack: the seed's `video-seedance-1.mp4` (the
+rive-try copy is the same file), cream plate. Wave 2: Lumi on green, 4 s.
+
+| Clip | Before (silhouette, 12 fps) | After (colour, clip fps) |
+|---|---|---|
+| tanka walk (front waddle) | `loops[0]` 1.417–3.333 s, period 1.917 s | period **1.875 s** (periodicity 0.747); `loops[0]` 0.875–2.75 s, seam 0.0023 vs step 0.0093; the half-stride dip (0.875 s) is 5× shallower, so not ambiguous. sprite-gen's own walk window (0.5–1.6 s) refuses this clip: it reads 0.833 s at periodicity −0.08 |
+| tanka celebrate (hops) | 1.083–2.0 s, 0.917 s | period 0.958 s (0.426); `loops[0]` 0.833–1.75 s, whose next frame repeats within 0.2 of a step |
+| tanka dance | 2.5–4.583 s, 2.083 s | period 2.25 s (0.834); `loops[0]` 2.042–4.25 s |
+| tanka wave | no window | period 1.708 s (0.509) — the arm waves; the outline change was under the old 0.25 motion bar |
+| tanka typing | no window | period 2.042 s (0.29), a slow sway |
+| tanka idle, coffee, reading, sleep, thinking (first-last) | no window | **no cycle** ("nothing repeats between 0.4 and 2.5 s"): each drifts from its keyframe and back once. reading: one-shot 1.792–3.833 s |
+| Lumi attack (seed clip) | three "loops" at 3.417 s inside the closing hold, seam 0.328 against a step of 0.093 — windows that do not close, ranked first | **no cycle** (periodicity 0.094 < 0.15), no one-shot — the swing starts at once and ends in another pose, so there is no rest to return to (sprite-gen refuses it the same way); sample `stillStart`–`stillEnd`, 0.042–3.583 s |
+| Lumi side walk (wave 2) | 1.5–2.833 s, 1.333 s | period **1.333 s** (0.813), not ambiguous: the half stride dips 3.6× shallower in colour (3.2× in silhouette — this costume's legs differ in outline too); `--gait walk` leaves it unchanged |
+| Lumi jump `tight` (wave 2) | three windows of 2.0–2.5 s whose ends differ by 0.12–0.14, twice their step | **no cycle**; one-shot 0.167–2.792 s. The two "hops" are one excursion: between them she stays raised (her head is cut by the top edge from 1.00 to 2.54 s; distance from frame 0 stays at 0.19, as far as the jump peak) and only the second one brings her back to the opening pose |
+| Lumi jump `roomy` (wave 2) | three windows, ends 0.22–0.24 apart, 3–5 steps | **no cycle**; one-shot 0.25–2.875 s, the same shape (she holds 0.17 from frame 0 in between) — sprite-gen cuts the same window. Its `action` (1.625–2.375 s) is only the part above the contrast threshold; sample the whole `start`–`end` |
+| Lumi attack, first-last (wave 2) | windows 1.333–1.917 s whose ends differ by 0.19–0.22 | **no cycle**; one-shot 0.083–3.25 s (action 1.583–3.083 s) |
+
+Wall time per `contact` (24 stills included): 2.6–4.4 s before, 2.9–4.7 s after.
+`stillStart` moves by one analysed frame (0.167 → 0.125 s on 24 fps clips).
+
+**`loop`, the seam and `--seam-fill auto`, before → after**, on tanka's ten
+loops (VEED matte of the Topaz 60 fps clip, `--key alpha`, the whole clip):
+
+| Loop | Before: seam / step (silhouette) | fill | After: seam / step (colour) | `seamLimit` | fill |
+|---|---|---|---|---|---|
+| celebrate | 0.0018 / 0.0071 | 0 | 0.0025 / 0.0036 | 0.0072 | 0 |
+| coffee | 0.0032 / 0.0008 | **3** | 0.0031 / 0.0006 | 0.005 | **0** |
+| dance | 0.0016 / 0.0088 | 0 | 0.0022 / 0.0036 | 0.0072 | 0 |
+| idle | 0.0013 / 0.0003 | **4** | 0.0021 / 0.0004 | 0.005 | **0** |
+| reading | 0.0015 / 0.0003 | **4**, and still "does not close" | 0.0033 / 0.0004 | 0.005 | **0**, closes |
+| sleep | 0.0014 / 0.0009 | 0 | 0.0030 / 0.0007 | 0.005 | 0 (colour without the floor would add 4) |
+| thinking | 0.0018 / 0.0003 | **4** | 0.0030 / 0.0003 | 0.005 | **0** |
+| typing | 0.0013 / 0.0006 | **2** | 0.0030 / 0.0009 | 0.005 | **0** |
+| walk | 0.0172 / 0.0068 | 2 | 0.0079 / 0.0031 | 0.0062 | 2 (wrap after: 0.0043) |
+| wave | 0.0028 / 0.0058 | 0 | 0.0028 / 0.0023 | 0.005 | 0 |
+
+The five loops whose decision changed, last frame | first frame | difference
+×16: the same pose every time, and a
+difference that is fur-texture noise spread over the whole body with no
+structure — nothing the four interpolated frames were fixing. The walk keeps
+its two: a real 2.5-step wrap. The wave-2 first-last attack closes either way
+(0.0011 against 0.0008 after; 0.007 against 0.0097 before).
+
+**Transitions keep silhouette joins.** On tanka-connect's four transitions the
+colour measure agrees on three and false-alarms on one: `idle-to-reading`'s end
+reads 0.0154 against a limit of 0.0135 on two frames of the same pose (fur
+and tablet shading differ between the two renders); its silhouette gap, 0.0083 against
+0.0194, lands. So `transition` is unchanged (`pipeline.md`).
+
+**Synthetic ground truth** (`__tests__/sprite-sheet.test.ts`, ffmpeg `overlay`
+fixtures, each checked to move): a walker whose two legs differ only in colour
+(silhouettes half a stride apart differ on < 3 % of the ink) reads 1 s, not
+the 0.5 s step; with identical legs plus a non-repeating speck it reads 0.5 s
+flagged `ambiguous: [0.5, 1]`, `--gait walk` takes 1 s, and a 1.25 s clip of
+it is refused as half a stride; a single hop is a one-shot with no cycle; a
+near-still loop whose wrap is 3.4 steps of noise closes with no fill (the old
+rule filled 3); a blink in the last four frames of an otherwise still loop does
+not close (the silhouette seam was exactly 0).
+
+What this does not show yet: a real clip whose near and far legs read alike —
+every real walk so far separates the stride from the step by 3× or more in
+both measures, so `ambiguous` and the gait floor are pinned on synthetic clips
+only.

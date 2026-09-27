@@ -23,11 +23,13 @@ import ts from "typescript";
 import { loadRoster, type CharacterProject, type Motion } from "../domain.js";
 import spriteManifest from "../manifest.js";
 import { atlasGeometry, atlasPivot } from "../viewer/atlas.js";
-import { pivotGuide } from "../viewer/frame-render.js";
+import { characterFitFrame, pivotGuide, stageScale } from "../viewer/frame-render.js";
 import {
   alphaCoverageOf,
+  BODY_DRIFT_WARNING,
   bodyDriftOf,
   bodyDriftVerdict,
+  JUMP_WARNING,
   formatBytes,
   joinVerdict,
   loopDuration,
@@ -38,6 +40,7 @@ import {
   seamOf,
   seamVerdict,
   sizeLine,
+  stageFacing,
   stepOf,
 } from "../viewer/metrics.js";
 import {
@@ -51,9 +54,11 @@ import {
   defaultTab,
   defaultExportRepeat,
   EXPORT_SWATCHES,
+  exportFamilyOrder,
   exportKey,
   exportRequestNotification,
   exportRows,
+  labelNamesDirection,
   loopExports,
   motionLabel,
   normalizeExportColor,
@@ -83,6 +88,7 @@ import {
   advance,
   contentSetMismatch,
   frameCountOf,
+  NAVIGATE_ROSTER_WAIT_MS,
   parseAddress,
   playbackStateData,
   resolveAddress,
@@ -583,6 +589,21 @@ describe("resolveAddress", () => {
     expect(r.ok).toBe(true);
     expect(r.target).toEqual({ kind: "character" });
   });
+
+  // Four-direction trial, 2026-09-27: `navigate-to {ref: "turnaround"}` right
+  // after `add-ref` answered "not in this character (has: none)" — the file
+  // event had not reached the viewer yet. The refusals a newer roster can
+  // turn into an arrival say so, and the stage waits for one, bounded.
+  test("what a newer roster could still list is marked; a wrong character or a missing motion name is not", () => {
+    expect(resolveAddress(p, { ref: "turnaround" }, null).notYetKnown).toBe(true);
+    expect(resolveAddress(p, { motion: "attack" }, null).notYetKnown).toBe(true);
+    expect(resolveAddress(p, { motion: "bounce", frame: 12 }, null).notYetKnown).toBe(true);
+    expect(resolveAddress(null, { motion: "bounce" }, null).notYetKnown).toBe(true);
+    expect(resolveAddress(p, { contentSet: "other", motion: "bounce" }, null).notYetKnown).toBeUndefined();
+    expect(resolveAddress(p, { frame: 2 }, null).notYetKnown).toBeUndefined();
+    expect(resolveAddress(p, { motion: "bounce" }, null).notYetKnown).toBeUndefined();
+    expect(NAVIGATE_ROSTER_WAIT_MS).toBe(2000);
+  });
 });
 
 /**
@@ -976,6 +997,7 @@ describe("sizeLine", () => {
     const p = project();
     expect(sizeLine(p, null, null)).toEqual({
       declared: "64",
+      logicalHeight: null,
       measured: null,
       packedScale: null,
     });
@@ -1001,6 +1023,7 @@ describe("sizeLine", () => {
     const line = sizeLine(p, motion, atlasGeometry(p, motion));
     expect(line).toEqual({
       declared: "128",
+      logicalHeight: null,
       measured: "250×250",
       packedScale: 0.5,
     });
@@ -1041,6 +1064,63 @@ describe("sizeLine", () => {
       body.sprite.character.cell = { width: 256, height: 192 };
     });
     expect(sizeLine(p, null, null).declared).toBe("256×192");
+  });
+
+  // Route A's header read "declared 256 · measured 226×502 · facing right"
+  // over an uploaded front-facing picture, and a pixel character declared 27
+  // px tall read "declared 256" (2026-09-27 trials). Each route says what it
+  // is held to, and nothing it is not.
+  test("a picture brought to life and a UI loop have no declared cell to be compared with", () => {
+    for (const purpose of ["animate", "loop"]) {
+      const p = mutate((body) => { body.sprite.character.purpose = purpose; });
+      const line = sizeLine(p, motionOf(p), atlasGeometry(p, motionOf(p)));
+      expect(line.declared).toBeNull();
+      expect(spriteStrings("en").sizeLine(line)).toBe("measured 64×64");
+    }
+    for (const purpose of ["game", "mascot"]) {
+      const p = mutate((body) => { body.sprite.character.purpose = purpose; });
+      expect(sizeLine(p, null, null).declared).toBe("64");
+    }
+  });
+
+  test("pixel art is held to its height in logical pixels, not a cell, in both languages", () => {
+    const p = mutate((body) => {
+      body.sprite.character.purpose = "game";
+      body.sprite.character.pixel = { logicalHeight: 27 };
+    });
+    const line = sizeLine(p, motionOf(p), atlasGeometry(p, motionOf(p)));
+    expect(line).toMatchObject({ declared: null, logicalHeight: 27, measured: "64×64" });
+    expect(spriteStrings("en").sizeLine(line)).toBe("27 px tall · measured 64×64");
+    expect(spriteStrings("zh").sizeLine(line)).toBe("高 27 像素 · 实测 64×64");
+  });
+});
+
+describe("stageFacing", () => {
+  test("the motion's own direction wins over the character's side", () => {
+    const p = mutate((body) => {
+      body.sprite.character.facing = "right";
+      body.sprite.motions[0].direction = "front";
+    });
+    expect(stageFacing(p, motionOf(p))).toBe("front");
+    expect(spriteStrings("en").facing("front")).toBe("facing front");
+    expect(spriteStrings("zh").facing("front")).toBe("正面");
+    expect(spriteStrings("zh").facing("back")).toBe("背面");
+    expect(spriteStrings("zh").facing("left")).toBe("朝左");
+  });
+
+  test("with no direction the character's side, except on the routes that have none", () => {
+    const side = mutate((body) => { body.sprite.character.facing = "left"; });
+    expect(stageFacing(side, motionOf(side))).toBe("left");
+    expect(stageFacing(side, null)).toBe("left");
+    for (const purpose of ["animate", "loop"]) {
+      const p = mutate((body) => {
+        body.sprite.character.facing = "right";
+        body.sprite.character.purpose = purpose;
+      });
+      expect(stageFacing(p, motionOf(p))).toBeNull();
+    }
+    const unset = mutate((body) => { delete body.sprite.character.facing; });
+    expect(stageFacing(unset, motionOf(unset))).toBeNull();
   });
 });
 
@@ -1084,13 +1164,30 @@ describe("inspect thresholds", () => {
   test("the jump bar is 8 % of the cell, so it moves with the cell", () => {
     // 250px cell → 20px. The same 25px jump is a warning here and not on a
     // 512px sheet, which is exactly why a fixed px limit would lie.
-    expect(maxJumpVerdict(inspect({ maxJump: 25 }))).toEqual({
+    const jumped = [`${JUMP_WARNING} 02 and 03`];
+    expect(maxJumpVerdict(inspect({ maxJump: 25, warnings: jumped }))).toEqual({
       limit: 20,
       over: true,
     });
     expect(
-      maxJumpVerdict(inspect({ maxJump: 25, cell: { width: 512, height: 512 } })),
+      maxJumpVerdict(inspect({ maxJump: 25, cell: { width: 512, height: 512 }, warnings: jumped })),
     ).toEqual({ limit: 40.96, over: false });
+  });
+
+  test("over the bar is amber only when the run warned: the jump and drift rules have a second condition", () => {
+    // Four-direction trial, 2026-09-27: 27.5 px over a 22.24 px bar, painted
+    // amber beside an empty warning list — the script warns about a jump
+    // only when the feet jump too.
+    expect(maxJumpVerdict(inspect({ maxJump: 27.5, cell: { width: 278, height: 400 } }))).toEqual({ limit: 22.24, over: false });
+    expect(maxJumpVerdict(inspect({ maxJump: 27.5, cell: { width: 278, height: 400 }, warnings: [`${JUMP_WARNING} 05 and 06`] })).over).toBe(true);
+    // Body drift has its own second condition (the head moves, the foot
+    // line was not kept on purpose).
+    expect(bodyDriftVerdict(inspect({ bodyDrift: 17.4 }))).toEqual({ limit: 12.5, over: false });
+    expect(bodyDriftVerdict(inspect({ bodyDrift: 17.4, warnings: [`${BODY_DRIFT_WARNING} — re-run align with --x-from feet/cell`] })).over).toBe(true);
+    // The script's own sentences, word for word.
+    const script = readFileSync(join(import.meta.dir, "..", "skill", "scripts", "sprite-sheet.mjs"), "utf-8");
+    expect(script).toContain(`\`${JUMP_WARNING} \${pad(jumpPair[0])}`);
+    expect(script).toContain(`"${BODY_DRIFT_WARNING} — re-run align`);
   });
 
   test("no measured cell means no bar at all — never a bar of zero", () => {
@@ -1103,10 +1200,42 @@ describe("inspect thresholds", () => {
     expect(bodyDriftOf(inspect())).toBeNull();
     expect(bodyDriftOf(inspect({ bodyDrift: 17.4 }))).toBe(17.4);
     expect(bodyDriftOf(inspect({ bodyDrift: "17.4" }))).toBeNull();
-    expect(bodyDriftVerdict(inspect({ bodyDrift: 17.4 }))).toEqual({
+    expect(bodyDriftVerdict(inspect({ bodyDrift: 17.4, warnings: [`${BODY_DRIFT_WARNING} — re-run align with --x-from feet/cell`] }))).toEqual({
       limit: 12.5,
       over: true,
     });
+  });
+});
+
+/**
+ * Game trial, 2026-09-27: Fit showed the attack at 70 % and the idle and walk
+ * at 1× — a size change the user read off the stage. One box per character.
+ */
+describe("one fit scale per character", () => {
+  const sized = (cells: Array<[string, number, number, string?]>) => mutate((body) => {
+    const template = body.sprite.motions[0];
+    body.sprite.motions = cells.map(([id, width, height, kind]) => ({
+      ...template, id, ...(kind ? { kind } : {}), inspect: { ...template.inspect, cell: { width, height } },
+    }));
+  });
+
+  test("the box is the widest and the tallest sprite cell; loops and motions without frames are left out", () => {
+    const p = sized([["idle", 226, 502], ["attack", 420, 480], ["flame", 900, 900, "loop"]]);
+    expect(characterFitFrame(p)).toEqual({ width: 420, height: 502 });
+    expect(characterFitFrame(null)).toBeNull();
+    const none = mutate((body) => { body.sprite.motions[0].frames = []; });
+    expect(characterFitFrame(none)).toBeNull();
+  });
+
+  test("fitted by that box, every motion shares the scale the largest one needs", () => {
+    const box = { width: 420, height: 502 };
+    // A 600×480 stage: the attack alone fits at 0.82, the idle alone at 1 —
+    // together they both play at 0.82.
+    const alone = [stageScale("fit", 420, 480, 600, 480), stageScale("fit", 226, 502, 600, 480)];
+    expect(alone[0]).not.toBe(alone[1]);
+    const shared = stageScale("fit", Math.max(box.width, 226), Math.max(box.height, 502), 600, 480);
+    expect(shared).toBe(stageScale("fit", Math.max(box.width, 420), Math.max(box.height, 480), 600, 480));
+    expect(shared).toBeLessThan(1);
   });
 });
 
@@ -1455,6 +1584,22 @@ describe("loop motions", () => {
       expect(seamVerdict(inspect({ seam: 0.13, step: 0.02 })).over).toBe(true);
     });
 
+    test("a recorded bar is the verdict's bar: the noise floor under a near-still loop", () => {
+      // tanka's idle as `loop` now reports it: a wrap five steps long that is
+      // re-render noise, judged against max(2 x step, 0.005). Re-deriving
+      // 2 x step here would call "does not close" what the script closed.
+      expect(seamVerdict(inspect({ seam: 0.0021, step: 0.0004, seamLimit: 0.005 })))
+        .toEqual({ limit: 0.005, over: false });
+      expect(seamVerdict(inspect({ seam: 0.0205, step: 0, seamLimit: 0.005 })))
+        .toEqual({ limit: 0.005, over: true });
+      // A report from before the bar was recorded keeps the rule its run used.
+      expect(seamVerdict(inspect({ seam: 0.0021, step: 0.0004 })))
+        .toEqual({ limit: 0.0008, over: true });
+      // A recorded bar judges even when the step is missing.
+      expect(seamVerdict(inspect({ step: undefined, seamLimit: 0.005 })))
+        .toEqual({ limit: 0.005, over: true });
+    });
+
     test("no step is no bar, and no seam is no verdict", () => {
       // A loop nobody measured is not judged — it is not judged YET, which is
       // a different thing from passing.
@@ -1676,7 +1821,11 @@ describe("the Export tab", () => {
       ["frames", "lottie", "missing", false],
       ["frames", "png-seq", "missing", false],
       ["frames", "sheet", "ready", true],
-      ["rive", "riv", "missing", false],
+      // The same sheet re-described for createFromAseprite, made on demand.
+      ["frames", "aseprite", "missing", false],
+      ["character", "riv", "missing", false],
+      // Every ready sprite motion on one sheet, a frame tag each.
+      ["character", "character-aseprite", "missing", false],
     ]);
     // A run's own file is a download and nothing else.
     const gif = rowOf(rows, "gif");
@@ -1750,8 +1899,13 @@ describe("the Export tab", () => {
       ["frames", "lottie", "ready", true],
       ["frames", "png-seq", "missing", false],
       ["frames", "sheet", "loop-atlas", false],
+      // An Aseprite sheet is an atlas: a loop never is one.
+      ["frames", "aseprite", "loop-atlas", false],
       // The character's .riv, loops and all.
-      ["rive", "riv", "missing", false],
+      ["character", "riv", "missing", false],
+      // The character's sheet holds its sprite motions — bounce — and is
+      // offered from the loop's tab too, as the .riv is.
+      ["character", "character-aseprite", "missing", false],
     ]);
     expect(rowOf(rows, "webm").state).toMatchObject({ files: [{ name: "loop.webm", size: 12_750 }] });
     expect(rowOf(rows, "webm").canGenerate).toBe(false);
@@ -1864,6 +2018,127 @@ describe("the Export tab", () => {
     });
     expect(rowOf(exportRows(withLoop, motionOf(withLoop, "flame"), editing), "riv").rive)
       .toEqual({ motions: ["bounce", "flame"], transitions: [], missing: [], decodeBytes: 65_536, loops: { fps: 6, width: 32, height: 36 }, tooHeavy: false });
+  });
+
+  /** Registers `mini-export-aseprite` holding `motions`, the way register-export does. */
+  function addSheet(body: any, motions: string[], metadata: Record<string, unknown> = {}) {
+    body.sprite.exports = { ...(body.sprite.exports ?? {}), aseprite: "mini-export-aseprite" };
+    body.assets.push({
+      id: "mini-export-aseprite", type: "image", uri: "exports/mini-aseprite.zip", name: "Mini (aseprite)",
+      metadata: { width: 128, height: 128, frames: 4, motionCount: motions.length, container: "zip", size: 3_000, ...metadata },
+      createdAt: 60, status: "ready",
+    });
+    body.provenance.push({
+      toAssetId: "mini-export-aseprite", fromAssetId: "bounce-frame-00",
+      operation: { type: "derive", actor: "agent", params: { tool: "sprite-sheet.mjs", step: "export", format: "aseprite", motions, inputs: [] }, timestamp: 60 },
+    });
+  }
+
+  test("the character's Aseprite sheet: what a Generate would hold, what a made one holds and lacks", () => {
+    const p = mutate(addFlame);
+    // Before it exists: every ready sprite motion — not the loop.
+    expect(rowOf(exportRows(p, motionOf(p, "flame"), editing), "character-aseprite").sheet)
+      .toEqual({ motions: ["bounce"], missing: [] });
+    const made = mutate((b) => {
+      addFlame(b);
+      addSheet(b, ["bounce"], { shadow: { squash: 0.25, shear: 0.8, opacity: 0.4, blur: 3, color: "#140f1e" } });
+    });
+    const row = rowOf(exportRows(made, motionOf(made), editing), "character-aseprite");
+    expect(row.state).toEqual({
+      kind: "ready",
+      files: [{ assetId: "mini-export-aseprite", name: "mini-aseprite.zip", uri: "exports/mini-aseprite.zip", size: 3_000, createdAt: 60 }],
+    });
+    expect(row.sheet).toEqual({ motions: ["bounce"], missing: [] });
+    expect(row.shadow).toBe(true);
+    expect(row.canGenerate).toBe(true);
+    // Remembered per character, like the .riv.
+    expect(row.key).toBe("mini::character-aseprite");
+    // A sprite motion finished after the sheet was made is said to be missing.
+    const later = mutate((b) => {
+      addSheet(b, ["bounce"]);
+      b.sprite.motions.push({ ...b.sprite.motions[0], id: "hop", label: "Hop" });
+    });
+    expect(rowOf(exportRows(later, motionOf(later), editing), "character-aseprite").sheet)
+      .toEqual({ motions: ["bounce"], missing: ["hop"] });
+  });
+
+  test("a motion's Aseprite export and a shadowed video say what they are", () => {
+    const shadow = { squash: 0.25, shear: 0.8, opacity: 0.4, blur: 3, color: "#140f1e" };
+    const p = mutate((b) => {
+      b.sprite.motions[0].exports = { aseprite: "bounce-export-aseprite", mp4: "bounce-export-mp4" };
+      b.assets.push(
+        { id: "bounce-export-aseprite", type: "image", uri: "motions/bounce/exports/bounce-aseprite.zip", name: "", metadata: { container: "zip", size: 2_954 }, createdAt: 70, status: "ready" },
+        { id: "bounce-export-mp4", type: "video", uri: "motions/bounce/exports/bounce.mp4", name: "", metadata: { repeat: 6, duration: 3, background: "#ffffff", shadow, size: 9_000 }, createdAt: 71, status: "ready" },
+      );
+    });
+    const rows = exportRows(p, motionOf(p), editing);
+    expect(rowOf(rows, "aseprite").state).toMatchObject({ kind: "ready", files: [{ name: "bounce-aseprite.zip", size: 2_954 }] });
+    expect(rowOf(rows, "aseprite").shadow).toBeUndefined();
+    expect(rowOf(rows, "mp4").shadow).toBe(true);
+  });
+
+  test("the character sheet's request names the scope and the motions, and no motion", () => {
+    const p = project();
+    const row = rowOf(exportRows(p, motionOf(p), editing), "character-aseprite");
+    const note = exportRequestNotification({ project: p, motion: null, format: "character-aseprite", background: null, label: "Export", sheet: row.sheet });
+    expect(note.summary).toBe("/export · Mini · aseprite");
+    expect(note.message.split("\n")[1]).toBe(
+      "command: export · character: mini · format: aseprite · scope: whole character — every ready sprite motion on one sheet · motions: bounce",
+    );
+    const one = exportRequestNotification({ project: p, motion: motionOf(p), format: "aseprite", background: null, label: "Export" });
+    expect(one.message.split("\n")[1]).toBe("command: export · character: mini · motion: bounce · format: aseprite");
+  });
+
+  test("a pixel-art character's colourways are downloads beside the sheet, one row each, in the character's order", () => {
+    const withColourways = (edit?: (b: any) => void) => mutate((b) => {
+      b.sprite.character.pixel = {
+        logicalHeight: 32,
+        palette: "mini-palette",
+        variants: [
+          { name: "red-team", map: { "#3050a0": "#a03030" } },
+          { name: "blue-team", map: { "#a03030": "#3050a0" } },
+        ],
+      };
+      // Registered out of the character's order; listed in it.
+      b.sprite.motions[0].variants = {
+        "blue-team": { sheet: "bounce-variant-blue-team-sheet", atlas: "bounce-variant-blue-team-atlas", gif: "bounce-variant-blue-team-gif" },
+        "red-team": { sheet: "bounce-variant-red-team-sheet", atlas: "bounce-variant-red-team-atlas", gif: "bounce-variant-red-team-gif" },
+      };
+      for (const name of ["red-team", "blue-team"]) {
+        for (const [part, file, type] of [["sheet", "sheet.png", "image"], ["atlas", "atlas.json", "text"], ["gif", "preview.gif", "image"]]) {
+          b.assets.push({ id: `bounce-variant-${name}-${part}`, type, uri: `motions/bounce/variants/${name}/${file}`, name: "", metadata: { size: 1_000 }, createdAt: 90, status: "ready" });
+        }
+      }
+      edit?.(b);
+    });
+    const p = withColourways();
+    const rows = exportRows(p, motionOf(p), editing);
+    const colourways = rows.filter((r) => r.format === "colourway");
+    expect(colourways.map((r) => [r.family, r.variant, r.builtIn, r.canGenerate])).toEqual([
+      ["frames", "red-team", true, false],
+      ["frames", "blue-team", true, false],
+    ]);
+    expect(colourways[0].state).toMatchObject({
+      kind: "ready",
+      files: [{ name: "sheet.png", uri: "motions/bounce/variants/red-team/sheet.png" }, { name: "atlas.json" }, { name: "preview.gif" }],
+    });
+    // After the sheet and its Aseprite twin, before the whole character.
+    const formats = rows.map((r) => r.format);
+    expect(formats.indexOf("colourway")).toBe(formats.indexOf("aseprite") + 1);
+    // Each row is its own request key, so the list renders with unique keys.
+    expect(new Set(colourways.map((r) => r.key)).size).toBe(2);
+    // A download, so the hosted player lists them too.
+    const viewing = exportRows(p, motionOf(p), { canRequest: false, requests: new Map() });
+    expect(viewing.filter((r) => r.format === "colourway").map((r) => r.variant)).toEqual(["red-team", "blue-team"]);
+
+    // Files not there (a re-run retired them), or a name the character no
+    // longer records, are no row: nothing here can make one.
+    const retired = withColourways((b) => {
+      delete b.sprite.motions[0].variants["blue-team"];
+      b.assets = b.assets.filter((a: { id: string }) => a.id !== "bounce-variant-red-team-atlas");
+      b.sprite.character.pixel.variants = b.sprite.character.pixel.variants.filter((v: { name: string }) => v.name !== "red-team");
+    });
+    expect(exportRows(retired, motionOf(retired), editing).some((r) => r.format === "colourway")).toBe(false);
   });
 
   test("a viewing-only session shows only what can be downloaded", () => {
@@ -2000,8 +2275,8 @@ describe("the Export tab", () => {
   });
 
   describe("in both languages", () => {
-    const FORMATS = ["mp4", "mov", "webm", "gif", "webp", "apng", "lottie", "png-seq", "sheet", "riv"] as const;
-    const REASONS = ["loop-gif", "loop-atlas", "too-heavy", "not-ready", "not-in-run"] as const;
+    const FORMATS = ["mp4", "mov", "webm", "gif", "webp", "apng", "lottie", "png-seq", "sheet", "aseprite", "riv", "character-aseprite"] as const;
+    const REASONS = ["loop-gif", "loop-atlas", "too-heavy", "not-ready", "not-in-run", "no-sprite-motion"] as const;
 
     test("every row has a name and a purpose line", () => {
       for (const locale of ["en", "zh"]) {
@@ -2025,7 +2300,10 @@ describe("the Export tab", () => {
       const zh = spriteStrings("zh");
       expect(zh.exportPurpose("mov", { motions: 1 })).toBe("ProRes 4444 · 保留透明，给剪辑软件用");
       expect(zh.exportPurpose("riv", { motions: 3 })).toBe("整个角色 · 3 个动作 · 位图帧");
-      expect(zh.exportFamily).toEqual({ video: "视频", frames: "帧动画", rive: "Rive" });
+      expect(zh.exportFamily).toEqual({ video: "视频", frames: "帧动画", character: "整个角色" });
+      expect(en.exportFamily.character).toBe("Whole character");
+      expect(en.exportPurpose("character-aseprite", { motions: 2 })).toBe("2 sprite motions on one sheet, a frame tag each · Phaser builds every animation in one call");
+      expect(zh.exportPurpose("character-aseprite", { motions: 2 })).toBe("2 个精灵动作拼在一张图上，每个动作一个帧标签 · Phaser 一次建好全部动画");
       expect(zh.tab.export).toBe("导出");
       expect(en.tab.export).toBe("Export");
       // Chinese reasons are written in Chinese, not left in English.
@@ -2276,7 +2554,10 @@ describe("connected motions", () => {
       ["frames", "gif", "transition-gif"],
       ["frames", "apng", "missing"], ["frames", "lottie", "missing"], ["frames", "png-seq", "missing"],
       ["frames", "sheet", "transition-atlas"],
-      ["rive", "riv", "missing"],
+      ["frames", "aseprite", "transition-atlas"],
+      ["character", "riv", "missing"],
+      // Loops and transitions only: nothing goes on a sheet.
+      ["character", "character-aseprite", "no-sprite-motion"],
     ]);
     expect(rowOf(rows, "mp4").video).toEqual({ repeat: 1, seconds: 0.5, defaulted: true });
   });
@@ -2388,6 +2669,126 @@ describe("connected motions", () => {
 });
 
 // ── What the composer chip says ────────────────────────────────────────────
+
+/**
+ * The 0.5.0 read side: what the rail and the Export tab do with a recorded
+ * route, a direction, and a breathe or mirror source. Each is a pure
+ * function, so each is pinned here rather than read off a screenshot.
+ */
+describe("routes, directions, breathe and mirror on the stage", () => {
+  test("the rail says a direction once: not again after a label that ends with it", () => {
+    // `<State> · <direction>` is how a directional motion is labelled.
+    expect(labelNamesDirection("Attack · right", "right", "right")).toBe(true);
+    expect(labelNamesDirection("Walk · Left ", "left", "left")).toBe(true);
+    // The locale's word counts too (zh: 朝右).
+    expect(labelNamesDirection("攻击 · 朝右", "right", "朝右")).toBe(true);
+    // A label that does not say it, or says it inside a word, keeps the text.
+    expect(labelNamesDirection("Attack", "right", "right")).toBe(false);
+    expect(labelNamesDirection("Upright", "right", "right")).toBe(false);
+    expect(labelNamesDirection("Walk · left", "right", "right")).toBe(false);
+    expect(labelNamesDirection("Walk · right", undefined)).toBe(false);
+  });
+
+  test("the Export tab lists its sections in the order the route reads them", () => {
+    expect(exportFamilyOrder("game")).toEqual(["frames", "video", "character"]);
+    expect(exportFamilyOrder("mascot")).toEqual(["character", "video", "frames"]);
+    // Every other route — and a character whose route was never recorded —
+    // keeps the order the tab always had.
+    for (const purpose of ["loop", "animate", undefined] as const) {
+      expect(exportFamilyOrder(purpose)).toEqual(["video", "frames", "character"]);
+    }
+  });
+
+  test("the order covers every family exportRows can produce, once", () => {
+    const families = new Set(exportRows(project(), motionOf(project()), { canRequest: true, requests: new Map() }).map((r) => r.family));
+    for (const purpose of ["game", "loop", "mascot", "animate", undefined] as const) {
+      const order = exportFamilyOrder(purpose);
+      expect(new Set(order).size).toBe(order.length);
+      for (const family of families) expect(order).toContain(family);
+    }
+  });
+
+  test("\"frames are misaligned\" is not offered on a breathe or a mirror", () => {
+    const commands = [
+      { id: "render-video", label: "Render a clip" },
+      { id: "regenerate-motion", label: "Redraw" },
+      { id: "fix-alignment", label: "Frames are misaligned" },
+    ];
+    const bySource = (source: string | undefined) =>
+      motionCommands(commands, motionOf(mutate((b) => {
+        if (source === undefined) delete b.sprite.motions[0].source;
+        else b.sprite.motions[0].source = source;
+      }))).map((c) => c.id);
+    // A breathe's frames share one still's footing; a mirror's are fixed on
+    // its source. Both keep the other two commands — a breathe is re-run
+    // for free with new parameters.
+    expect(bySource("breathe")).toEqual(["render-video", "regenerate-motion"]);
+    expect(bySource("mirror")).toEqual(["render-video", "regenerate-motion"]);
+    // Drawn or sampled frames keep it.
+    for (const source of [undefined, "sheet", "video"]) expect(bySource(source)).toHaveLength(3);
+  });
+
+  test("the empty motion list asks for the next thing the route needs, in both languages", () => {
+    const en = spriteStrings("en");
+    const zh = spriteStrings("zh");
+    expect(en.noMotions(null)).toBe("No motions yet. Ask for one — idle, walk, attack.");
+    expect(zh.noMotions(null)).toBe("还没有动作。让助手做一个吧——待机、行走、攻击。");
+    expect(en.noMotions("game")).toBe("No motions yet. Say what it must do in the game — stand, walk, attack, jump.");
+    expect(en.noMotions("loop")).toBe("No loop yet. Describe what should move on the page, how long one cycle is, and how wide it shows.");
+    expect(en.noMotions("mascot")).toBe("No states yet. Name the ones the app switches between — an idle first, then the rest.");
+    expect(en.noMotions("animate")).toBe("Nothing moves yet. Ask for a gentle breathing idle first — free, and ready in seconds.");
+    expect(zh.noMotions("game")).toBe("还没有动作。说说它在游戏里要做哪些动作——待机、行走、攻击、跳跃。");
+    expect(zh.noMotions("loop")).toBe("还没有循环动画。说说页面上什么要动、循环一次多长、显示多宽。");
+    expect(zh.noMotions("mascot")).toBe("还没有状态。说说应用要在哪几种状态之间切换——先做待机，再做其余的。");
+    expect(zh.noMotions("animate")).toBe("还没动起来。先让它轻轻呼吸起来——免费，几秒钟就好。");
+    // Five routes, five different next asks, in each language.
+    for (const t of [en, zh]) {
+      const hints = (["game", "loop", "mascot", "animate", null] as const).map((p) => t.noMotions(p));
+      expect(new Set(hints).size).toBe(5);
+    }
+  });
+
+  test("the empty stage names the four routes, one sentence each, in both languages", () => {
+    const en = spriteStrings("en");
+    const zh = spriteStrings("zh");
+    for (const t of [en, zh]) {
+      expect(t.noCharacterRoutes).toHaveLength(4);
+      expect(new Set(t.noCharacterRoutes).size).toBe(4);
+      for (const route of t.noCharacterRoutes) expect(route.length).toBeGreaterThan(20);
+    }
+    // In the order the agent's opening question offers them: game, page loop,
+    // app mascot, picture brought to life — the last one free.
+    expect(en.noCharacterRoutes[0]).toMatch(/^A game character/);
+    expect(en.noCharacterRoutes[3]).toMatch(/^Bring your own picture to life .* free/);
+    expect(zh.noCharacterRoutes[0]).toMatch(/^游戏角色/);
+    expect(zh.noCharacterRoutes[3]).toMatch(/^让你的图动起来.*不花钱/);
+  });
+
+  test("a breathe chip says which way the pixels moved, in both languages", () => {
+    for (const locale of ["en", "zh"]) {
+      const t = spriteStrings(locale);
+      expect(t.breatheSource.length).toBeGreaterThan(0);
+      const titles = [t.breatheSourceTitle("smooth"), t.breatheSourceTitle("pixel"), t.breatheSourceTitle(null)];
+      expect(new Set(titles).size).toBe(3);
+    }
+    expect(spriteStrings("en").breatheSourceTitle("pixel")).toMatch(/whole pixels/);
+    expect(spriteStrings("zh").breatheSourceTitle("smooth")).toMatch(/平滑/);
+    // Natural Chinese, not "由一张图直接变形出呼吸" (R3, 2026-09-27).
+    expect(spriteStrings("zh").breatheSourceTitle(null)).toBe("用一张图直接做出呼吸动画，不调用模型");
+  });
+
+  test("every direction and the anchor role have words in both languages", () => {
+    for (const locale of ["en", "zh"]) {
+      const t = spriteStrings(locale);
+      for (const d of ["front", "back", "left", "right"] as const) {
+        expect(t.direction[d].length).toBeGreaterThan(0);
+        expect(t.directionTitle[d].length).toBeGreaterThan(0);
+      }
+      expect(t.refRole.anchor.length).toBeGreaterThan(0);
+    }
+    expect(spriteStrings("zh").direction).toEqual({ front: "正面", back: "背面", left: "朝左", right: "朝右" });
+  });
+});
 
 describe("selectionLabel", () => {
   const p = project();

@@ -24,7 +24,9 @@ import {
   loadRoster,
   type CharacterProject,
   type Motion,
+  type PixelLatticeCheck,
   type Roster,
+  type SliceRecord,
 } from "./domain.js";
 import spriteManifest from "./manifest.js";
 import SpritePreview from "./viewer/SpritePreview.js";
@@ -67,6 +69,52 @@ function addressNumber(
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Frame indices the way the pipeline names cells: `03`. */
+const pad2 = (i: number) => String(i).padStart(2, "0");
+
+/**
+ * An auto slice in one line: why the sheet was sliced by ink, a forced
+ * count, and the poses clipped anyway — the cells the agent should look at
+ * before trusting the frames. `sprite-project.mjs show --motion` says the
+ * same clauses.
+ */
+function describeSlice(slice: SliceRecord): string {
+  const cells = slice.gridClipped ?? [];
+  const parts = [
+    slice.reason === "asked"
+      ? "by the poses' ink (asked)"
+      : `by the poses' ink — the fixed grid cut through ${cells.length === 1 ? "cell" : "cells"} ${cells.map(pad2).join(", ") || "a pose"}`,
+  ];
+  if (slice.forced.rows) parts.push("rows forced (cut at the thinnest lines)");
+  slice.forced.cols.forEach((forced, row) => {
+    if (forced) parts.push(`row ${row} forced (cut at its thinnest columns)`);
+  });
+  if (slice.clipped.length > 0) {
+    parts.push(`clipped anyway: ${slice.clipped
+      .map((c) => `${pad2(c.index)} (${c.why === "cut" ? "cut apart from a pose it touched" : "drawn off the sheet"})`)
+      .join(", ")}`);
+  }
+  return parts.join("; ");
+}
+
+/**
+ * A pixel run's lattice check in one line: held or broken (and by which
+ * frames, in inspect's terms), the pitch and scale it was cut at, and
+ * whether the palette was part of the check. `show --motion` says the same.
+ */
+function describeLattice(pixel: PixelLatticeCheck): string {
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const frames = (list: number[]) =>
+    `${list.length === 1 ? "frame" : "frames"} ${list.slice(0, 6).map(pad2).join(", ")}${list.length > 6 ? `, … (${list.length} in all)` : ""}`;
+  const breaks = [
+    pixel.softAlphaFrames ? `soft alpha in ${frames(pixel.softAlphaFrames)}` : null,
+    pixel.offGridFrames ? `blocks off the ${pixel.scale}x grid in ${frames(pixel.offGridFrames)}` : null,
+    pixel.offPaletteFrames ? `colours outside the palette in ${frames(pixel.offPaletteFrames)}` : null,
+  ].filter((b): b is string => b !== null);
+  const status = pixel.held ? "held" : `broken${breaks.length ? ` — ${breaks.join("; ")}` : ""}`;
+  return `${status} · pitch ${round2(pixel.pitch.x)}×${round2(pixel.pitch.y)}, scale ${pixel.scale}x · palette ${pixel.paletteChecked ? "checked" : "not checked"}`;
+}
+
 /** One motion, described the way the agent needs to decide what to do next. */
 function describeMotion(
   motion: Motion,
@@ -79,13 +127,47 @@ function describeMotion(
       motion.loop ? "loop" : "play once"
     } · anchor ${motion.anchor}`,
   );
+  if (motion.direction) lines.push(`Direction: ${motion.direction}`);
   lines.push(`Status: ${motion.status}`);
   // Absent means "sheet" — the source of every motion made before the video
-  // path existed — so only the newer answer is worth a line.
+  // path existed — so only the newer answers are worth a line.
   if (motion.source === "video") {
     lines.push("Source: video (frames sampled from a clip)");
+  } else if (motion.source === "breathe") {
+    // The parameters too: "regenerate" on a breathe is a re-run with one of
+    // them changed, and this is the context that request arrives with.
+    const b = motion.breathe;
+    const params = b
+      ? ` · depth ${b.depth}, ${b.breaths} breath${b.breaths === 1 ? "" : "s"}, ${b.mode}${
+          b.anatomy
+            ? `, rigid row ${b.anatomy.rigidRow}, axis ${b.anatomy.axisX}${
+                b.anatomy.torsoHalf === undefined ? "" : `, torso ${b.anatomy.torsoHalf}`
+              } (${b.anatomy.from})`
+            : ""
+        }`
+      : "";
+    lines.push(
+      `Source: breathe (from ${b?.still ?? "a still that was not recorded"})${params}`,
+    );
+    // How far the head rides — word for word what `breathe` printed, so the
+    // answer to "the head bobs too much" starts from the measured travel.
+    const h = b?.headOffset;
+    if (h) {
+      const signed = (v: number) => (v > 0 ? `+${v}` : String(v));
+      lines.push(
+        `Head offset: ${signed(h.min)}..${signed(h.max)}px (travel ${h.travel}px: highest in frame ${h.highest.join(", ")}, lowest in ${h.lowest.join(", ")})`,
+      );
+    }
+  } else if (motion.source === "mirror") {
+    lines.push(
+      motion.mirrorOf
+        ? `Source: mirror of ${motion.mirrorOf} (its frames flipped left↔right)`
+        : "Source: mirror (its frames flipped left↔right)",
+    );
   }
   lines.push(`Frames: ${motion.frames.length}`);
+  // Its baked colourways — what the Export tab offers besides the motion's own files.
+  if (motion.variants) lines.push(`Colourways: ${Object.keys(motion.variants).join(", ")}`);
   // The size the user is looking at. The header says declared → measured, and
   // an agent that only knew the declared cell answered "256" to somebody
   // reading "186×252" off the same screen.
@@ -97,6 +179,16 @@ function describeMotion(
         : "";
     lines.push(`Measured cell: ${measured}${declared}`);
   }
+  // How the sheet was cut when it was not cut on the fixed grid, and how
+  // high each frame of a jump stands — the numbers a "the jump has no
+  // height" or "a pose is cut off" request needs.
+  if (motion.slice) lines.push(`Slice: ${describeSlice(motion.slice)}`);
+  if (motion.inspect?.lift) {
+    lines.push(`Lift above the ground (y from cell): ${motion.inspect.lift.map((v) => v ?? "-").join(", ")} px`);
+  }
+  // Whether pixel art is still pixel art after everything that ran after
+  // `pixel` — the check to quote before packing or exporting it.
+  if (motion.inspect?.pixel) lines.push(`Pixel lattice: ${describeLattice(motion.inspect.pixel)}`);
   if (motion.prompt) lines.push(`Prompt: "${motion.prompt}"`);
   if (motion.notes) lines.push(`Notes: ${motion.notes}`);
   if (motion.videos.length > 0) {
@@ -128,10 +220,27 @@ function describeCharacter(project: CharacterProject, lines: string[]): void {
       character.facing ? `, facing ${character.facing}` : ""
     })`,
   );
+  // What the user is making, so a later session does not ask again.
+  if (character.purpose) lines.push(`Purpose: ${character.purpose}`);
   if (character.style) lines.push(`Style: ${character.style}`);
+  // The side-specific details: why the other side is drawn rather than
+  // mirrored, and what every directional prompt has to keep on its side.
+  if (character.asymmetric) lines.push(`Asymmetric (never mirrored): ${character.asymmetric}`);
+  // Pixel art is a promise every later motion is held to: its height, its
+  // one palette, and the colourways baked from it.
+  if (character.pixel) {
+    const { logicalHeight, palette, variants } = character.pixel;
+    lines.push(
+      `Pixel art: ${logicalHeight} logical px tall · palette ${palette ? "pinned" : "not pinned yet"}${
+        variants ? ` · colourways: ${variants.map((v) => v.name).join(", ")}` : ""
+      }`,
+    );
+  }
   if (refs.length > 0) {
     lines.push(
-      `Refs: ${refs.map((r) => `${r.id} (${r.role})`).join(", ")}`,
+      `Refs: ${refs
+        .map((r) => `${r.id} (${r.role}${r.direction ? `, ${r.direction}` : ""})`)
+        .join(", ")}`,
     );
   } else {
     lines.push("Refs: none yet");
@@ -187,7 +296,11 @@ export function extractSpriteContext(
   } else if (refId) {
     const ref = findRef(project, refId);
     if (ref) {
-      lines.push(`Reference: "${ref.label}" (${ref.id}, role ${ref.role})`);
+      lines.push(
+        `Reference: "${ref.label}" (${ref.id}, role ${ref.role}${
+          ref.direction ? `, faces ${ref.direction}` : ""
+        })`,
+      );
     } else {
       lines.push(`Reference "${refId}" is not in this character.`);
     }

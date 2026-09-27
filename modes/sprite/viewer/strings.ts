@@ -23,11 +23,14 @@
  */
 
 import type {
+  CharacterPurpose,
+  Direction,
   GeneratedVideoMode,
   GeneratedVideoModel,
   Motion,
   MotionStatus,
   MotionVideo,
+  SpriteRefRole,
 } from "../domain.js";
 import type { AtlasNote } from "./atlas.js";
 import type { LoopLine, SizeLine } from "./metrics.js";
@@ -49,9 +52,14 @@ export interface SpriteStrings {
   railHide: string;
   noCharacterTitle: string;
   noCharacterBody: string;
-  /** `declared 256 · measured 186×252 · packed ×0.5` */
+  /** The empty stage's four routes, one sentence each, in the order the
+   *  agent's opening question names them. */
+  noCharacterRoutes: string[];
+  /** `declared 256 · measured 186×252 · packed ×0.5`; pixel art says its
+   *  height instead of a cell: `24 px tall · measured 48×50`. */
   sizeLine: (line: SizeLine) => string;
-  facing: (direction: "left" | "right") => string;
+  /** The header's facing: the motion's direction, else the character's side. */
+  facing: (direction: Direction) => string;
   refCount: (count: number) => string;
   motionCount: (count: number) => string;
   /** The header's count of transitions, beside the motions. */
@@ -61,6 +69,10 @@ export interface SpriteStrings {
   /** The rail's chip for the same thing. */
   videoSource: string;
   videoSourceTitle: string;
+  /** The rail's chip for a motion warped out of one still (breathe), and
+   *  its title, which says which way the pixels moved. */
+  breatheSource: string;
+  breatheSourceTitle: (mode: "smooth" | "pixel" | null) => string;
   /** The rail's chip for a motion whose deliverable is a seamless UI loop. */
   loopSource: string;
   loopSourceTitle: string;
@@ -134,9 +146,14 @@ export interface SpriteStrings {
   /** The rail's second list: the clips between loops. */
   transitions: string;
   noReferences: string;
-  noMotions: string;
+  /** The empty motion list's hint: the next thing to ask for, which depends
+   *  on what the user is making (`character.purpose`; null when unrecorded). */
+  noMotions: (purpose: CharacterPurpose | null) => string;
   referenceTitle: (label: string, role: string) => string;
-  refRole: Record<"turnaround" | "portrait" | "expression" | "custom", string>;
+  refRole: Record<SpriteRefRole, string>;
+  /** The way a motion (or an anchor) faces — the rail's small direction text. */
+  direction: Record<Direction, string>;
+  directionTitle: Record<Direction, string>;
   missingAsset: string;
   /** The rail's second line. `cols`/`rows` are null for a loop: a loop has no
    *  grid, and the 1×1 `register-run` records is a placeholder, not a fact
@@ -188,13 +205,15 @@ export interface SpriteStrings {
   /** The row's name. Formats are proper nouns; "PNG sequence" is not. */
   exportFormatName: Record<ExportRowFormat, string>;
   /** One line on what the format is for, in the user's words. `motions` is
-   *  the count a `.riv` holds; the other formats ignore it. */
+   *  the count a `.riv` or the character's sheet holds; the other formats
+   *  ignore it. */
   exportPurpose: (format: ExportRowFormat, m: { motions: number; transitions?: number }) => string;
   exportNotOffered: Record<ExportNotOffered, string>;
   /** How many times a video plays and for how long — stated before it is
    *  made, because the default depends on whether the motion loops. */
   exportRepeat: (video: ExportRepeat, loop: boolean) => string;
-  /** The ready `.riv` lacks motions that became ready after it was made. */
+  /** A ready `.riv` or character sheet lacks motions that became ready
+   *  after it was made. */
   exportRiveMissing: (motions: string[]) => string;
   /** On a transition's own tab: it is not a file of its own in Rive — it is
    *  part of the character's, which holds `count` of them. */
@@ -205,6 +224,8 @@ export interface SpriteStrings {
   exportRiveLoops: (m: { fps: number; width: number; height: number }) => string;
   /** The colour a made MP4 was flattened onto. */
   exportOnBackground: (hex: string) => string;
+  /** A made file carries a ground shadow (`export --shadow`). */
+  exportWithShadow: string;
   exportBackground: string;
   exportBackgroundField: string;
   exportColorInvalid: string;
@@ -307,9 +328,16 @@ const en: SpriteStrings = {
   railHide: "Hide the rail",
   noCharacterTitle: "No character yet",
   noCharacterBody:
-    "Sprite starts with a character — a name, a look, a style. Describe one in the chat and the agent will draw its references, then you can ask for motions: idle, walk, attack.",
+    "Sprite starts with a character. Tell the agent what you are making, or drop in a picture:",
+  noCharacterRoutes: [
+    "A game character — the moves it needs (stand, walk, attack, jump) as a sprite sheet your engine can load.",
+    "A looping animation for a page — a small icon or element that never stops moving, as WebP, APNG, WebM or Lottie.",
+    "A mascot for an app — a few states it switches between, packed into one Rive file.",
+    "Bring your own picture to life — upload an image and it starts breathing, free, in seconds.",
+  ],
   sizeLine: (line) =>
     [
+      line.logicalHeight !== null ? `${line.logicalHeight} px tall` : null,
       line.declared ? `declared ${line.declared}` : null,
       line.measured ? `measured ${line.measured}` : null,
       line.packedScale !== null ? `packed ${scaleText(line.packedScale)}` : null,
@@ -323,6 +351,13 @@ const en: SpriteStrings = {
   fromVideo: "from video",
   videoSource: "video",
   videoSourceTitle: "Frames sampled from a video clip",
+  breatheSource: "breathe",
+  breatheSourceTitle: (mode) =>
+    mode === "pixel"
+      ? "Breathing warped out of one picture, no model call — whole pixels, for pixel art"
+      : mode === "smooth"
+        ? "Breathing warped out of one picture, no model call — smooth resampling, for painted and anti-aliased art"
+        : "Breathing warped out of one picture, no model call",
   loopSource: "loop",
   loopSourceTitle: "A seamless transparent animation for a UI, not a sprite atlas",
   transitionChip: "transition",
@@ -399,13 +434,34 @@ const en: SpriteStrings = {
   transitions: "Transitions",
   noReferences:
     "No identity references yet. They are what keeps every motion sheet on model.",
-  noMotions: "No motions yet. Ask for one — idle, walk, attack.",
+  noMotions: (purpose) => {
+    switch (purpose) {
+      case "game":
+        return "No motions yet. Say what it must do in the game — stand, walk, attack, jump.";
+      case "loop":
+        return "No loop yet. Describe what should move on the page, how long one cycle is, and how wide it shows.";
+      case "mascot":
+        return "No states yet. Name the ones the app switches between — an idle first, then the rest.";
+      case "animate":
+        return "Nothing moves yet. Ask for a gentle breathing idle first — free, and ready in seconds.";
+      default:
+        return "No motions yet. Ask for one — idle, walk, attack.";
+    }
+  },
   referenceTitle: (label, role) => `${label} — ${role}`,
   refRole: {
     turnaround: "turnaround",
     portrait: "portrait",
     expression: "expression",
+    anchor: "direction anchor",
     custom: "custom",
+  },
+  direction: { front: "front", back: "back", left: "left", right: "right" },
+  directionTitle: {
+    front: "Faces the viewer",
+    back: "Faces away from the viewer",
+    left: "Faces left",
+    right: "Faces right",
   },
   missingAsset: "missing",
   motionMeta: (m) =>
@@ -460,7 +516,7 @@ const en: SpriteStrings = {
   exportLabel: { webp: "WebP", apng: "APNG", webm: "WebM", lottie: "Lottie" },
   exportLink: (label, size) => (size ? `${label} · ${size}` : label),
 
-  exportFamily: { video: "Video", frames: "Frame animation", rive: "Rive" },
+  exportFamily: { video: "Video", frames: "Frame animation", character: "Whole character" },
   exportFormatName: {
     mp4: "MP4",
     mov: "MOV",
@@ -471,7 +527,10 @@ const en: SpriteStrings = {
     lottie: "Lottie",
     "png-seq": "PNG sequence",
     sheet: "Sprite sheet + atlas",
+    aseprite: "Aseprite sheet",
     riv: "Rive",
+    "character-aseprite": "Aseprite sheet",
+    colourway: "Colourway",
   },
   exportPurpose: (format, m) => {
     switch (format) {
@@ -493,6 +552,12 @@ const en: SpriteStrings = {
         return "every frame plus animation.json, zipped · for game engines and editors";
       case "sheet":
         return "sheet.png + atlas.json · loads straight into Phaser or PixiJS";
+      case "aseprite":
+        return "the sheet + Aseprite JSON with a frame tag, zipped · Phaser's createFromAseprite, Flame";
+      case "character-aseprite":
+        return `${m.motions} sprite motion${m.motions === 1 ? "" : "s"} on one sheet, a frame tag each · Phaser builds every animation in one call`;
+      case "colourway":
+        return "sheet, atlas and preview in another palette · the same frames, pixel for pixel";
       default:
         return [
           "whole character",
@@ -515,6 +580,8 @@ const en: SpriteStrings = {
       "Even at 24 fps and 320 px, this character's motions would take more than 768 MB of memory to open — ask the agent in the chat for fewer motions or a lower frame rate.",
     "not-ready": "Available once the motion is ready.",
     "not-in-run": "Made by every run of the motion; this run was made without it.",
+    "no-sprite-motion":
+      "Only sprite motions go on the sheet, and none is ready yet — a loop is a sequence: use its PNG sequence or the Rive file.",
   },
   exportRepeat: (video, loop) => {
     const plays = video.repeat === 1 ? "plays once" : `plays ${video.repeat}×`;
@@ -530,6 +597,7 @@ const en: SpriteStrings = {
   exportRiveMemory: (size) => `takes about ${size} of memory once opened`,
   exportRiveLoops: (m) => `loops resampled to ${m.fps} fps, up to ${m.width}×${m.height} px`,
   exportOnBackground: (hex) => `on ${hex}`,
+  exportWithShadow: "with a ground shadow",
   exportBackground: "Background",
   exportBackgroundField: "Background colour as a hex code",
   exportColorInvalid: "Write the colour like #1a2b3c",
@@ -655,30 +723,43 @@ const zhCommandHints: Record<string, string> = {
   "render-video": "让助手把这个动作渲成一段视频，可以挑模型和生成方式。",
   "regenerate-motion": "让助手重画这个动作的雪碧图，可以附一句要改什么。",
   "fix-alignment": "帧与帧之间人物在滑或在跳时，让助手重新对齐。",
-  export: "让助手把这个动作——或整个角色——导出成视频、帧动画或 Rive 文件。",
+  export: "让助手把这个动作——或整个角色——导出成视频、帧动画、游戏引擎用的图集或 Rive 文件。",
 };
 
 const zhCN: SpriteStrings = {
   railShow: "显示侧栏",
   railHide: "收起侧栏",
   noCharacterTitle: "还没有角色",
-  noCharacterBody:
-    "精灵图从一个角色开始——名字、长相、画风。在对话里描述一个，助手会先画出它的参考图，之后你就可以要动作了：待机、行走、攻击。",
+  noCharacterBody: "精灵图从一个角色开始。告诉助手你想做什么，或者直接发一张图：",
+  noCharacterRoutes: [
+    "游戏角色——它要做的动作（待机、行走、攻击、跳跃），做成游戏引擎能直接用的精灵图。",
+    "网页上的循环动画——一个一直在动的小图标或小元素，导出成 WebP、APNG、WebM 或 Lottie。",
+    "应用里的吉祥物——几种能来回切换的状态，打包进一个 Rive 文件。",
+    "让你的图动起来——发一张图过来，它就会轻轻呼吸，不花钱，几秒就好。",
+  ],
   sizeLine: (line) =>
     [
+      line.logicalHeight !== null ? `高 ${line.logicalHeight} 像素` : null,
       line.declared ? `声明 ${line.declared}` : null,
       line.measured ? `实测 ${line.measured}` : null,
       line.packedScale !== null ? `打包 ${scaleText(line.packedScale)}` : null,
     ]
       .filter(Boolean)
       .join(" · "),
-  facing: (direction) => (direction === "left" ? "朝左" : "朝右"),
+  facing: (direction) => ({ front: "正面", back: "背面", left: "朝左", right: "朝右" })[direction],
   refCount: (count) => `${count} 张参考图`,
   motionCount: (count) => `${count} 个动作`,
   transitionCount: (count) => `${count} 段过渡`,
   fromVideo: "来自视频",
   videoSource: "视频",
   videoSourceTitle: "帧来自一段视频",
+  breatheSource: "呼吸",
+  breatheSourceTitle: (mode) =>
+    mode === "pixel"
+      ? "用一张图直接做出呼吸动画，不调用模型——按整像素移动，适合像素画"
+      : mode === "smooth"
+        ? "用一张图直接做出呼吸动画，不调用模型——平滑重采样，适合手绘和带抗锯齿的画"
+        : "用一张图直接做出呼吸动画，不调用模型",
   loopSource: "循环",
   loopSourceTitle: "做给界面用的无缝透明动画，不是游戏用的精灵图集",
   transitionChip: "过渡",
@@ -750,13 +831,34 @@ const zhCN: SpriteStrings = {
   motions: "动作",
   transitions: "过渡",
   noReferences: "还没有身份参考图。它们是每张动作图不跑形的依据。",
-  noMotions: "还没有动作。让助手做一个吧——待机、行走、攻击。",
+  noMotions: (purpose) => {
+    switch (purpose) {
+      case "game":
+        return "还没有动作。说说它在游戏里要做哪些动作——待机、行走、攻击、跳跃。";
+      case "loop":
+        return "还没有循环动画。说说页面上什么要动、循环一次多长、显示多宽。";
+      case "mascot":
+        return "还没有状态。说说应用要在哪几种状态之间切换——先做待机，再做其余的。";
+      case "animate":
+        return "还没动起来。先让它轻轻呼吸起来——免费，几秒钟就好。";
+      default:
+        return "还没有动作。让助手做一个吧——待机、行走、攻击。";
+    }
+  },
   referenceTitle: (label, role) => `${label} — ${role}`,
   refRole: {
     turnaround: "三视图",
     portrait: "头像",
     expression: "表情",
+    anchor: "朝向参考",
     custom: "自定义",
+  },
+  direction: { front: "正面", back: "背面", left: "朝左", right: "朝右" },
+  directionTitle: {
+    front: "面朝观众",
+    back: "背对观众",
+    left: "面朝左边",
+    right: "面朝右边",
   },
   missingAsset: "缺文件",
   motionMeta: (m) =>
@@ -801,7 +903,7 @@ const zhCN: SpriteStrings = {
   exportLabel: { webp: "WebP", apng: "APNG", webm: "WebM", lottie: "Lottie" },
   exportLink: (label, size) => (size ? `${label} · ${size}` : label),
 
-  exportFamily: { video: "视频", frames: "帧动画", rive: "Rive" },
+  exportFamily: { video: "视频", frames: "帧动画", character: "整个角色" },
   exportFormatName: {
     mp4: "MP4",
     mov: "MOV",
@@ -812,7 +914,10 @@ const zhCN: SpriteStrings = {
     lottie: "Lottie",
     "png-seq": "PNG 序列",
     sheet: "雪碧图 + 图集",
+    aseprite: "Aseprite 图集",
     riv: "Rive",
+    "character-aseprite": "Aseprite 图集",
+    colourway: "配色",
   },
   exportPurpose: (format, m) => {
     switch (format) {
@@ -834,6 +939,12 @@ const zhCN: SpriteStrings = {
         return "每一帧加 animation.json 打成 zip · 给游戏引擎和编辑器";
       case "sheet":
         return "sheet.png + atlas.json · Phaser、PixiJS 直接读";
+      case "aseprite":
+        return "雪碧图加带帧标签的 Aseprite JSON，打成 zip · 给 Phaser 的 createFromAseprite、Flame";
+      case "character-aseprite":
+        return `${m.motions} 个精灵动作拼在一张图上，每个动作一个帧标签 · Phaser 一次建好全部动画`;
+      case "colourway":
+        return "换一套配色的雪碧图、图集和预览 · 帧还是那些帧，像素一一对应";
       default:
         return [
           "整个角色",
@@ -854,6 +965,7 @@ const zhCN: SpriteStrings = {
       "就算降到 24 fps、320 px，这个角色的动作打开也要占 768 MB 以上内存——在对话里请助手少放几个动作，或者再降低帧率。",
     "not-ready": "动作就绪后才能导出。",
     "not-in-run": "这个文件随每次流水线产出，这一次跑的时候没有生成。",
+    "no-sprite-motion": "只有精灵动作会拼进这张图，现在还没有做好的——循环动画是逐帧序列，用它的 PNG 序列或 Rive 文件。",
   },
   exportRepeat: (video, loop) => {
     const line = `播 ${video.repeat} 遍 · ${video.seconds.toFixed(1)} 秒`;
@@ -866,6 +978,7 @@ const zhCN: SpriteStrings = {
   exportRiveMemory: (size) => `打开后约占 ${size} 内存`,
   exportRiveLoops: (m) => `循环动画降到 ${m.fps} fps，最大 ${m.width}×${m.height}`,
   exportOnBackground: (hex) => `底色 ${hex}`,
+  exportWithShadow: "带地面投影",
   exportBackground: "底色",
   exportBackgroundField: "底色的十六进制色值",
   exportColorInvalid: "颜色要写成 #1a2b3c 这样",

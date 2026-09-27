@@ -18,13 +18,14 @@
  */
 
 import type { ViewerNotification } from "../../../core/types/viewer-contract.js";
-import type { CharacterProject, ExportFormat, Motion, SpriteAsset } from "../domain.js";
+import type { CharacterProject, CharacterPurpose, Direction, ExportFormat, Motion, SpriteAsset } from "../domain.js";
 import {
   RIVE_DECODE_LIMIT_BYTES,
   RIVE_LOOP_FPS,
   RIVE_LOOP_MAX_SIZE,
   riveMB,
   riveDefaultImages,
+  riveMirrorIsCurrent,
   rivePlan,
   riveReverseIsCurrent,
   type RivePlan,
@@ -86,6 +87,24 @@ export function motionLabel(project: CharacterProject, motion: Motion): string {
   const from = label(motion.from);
   const to = label(motion.to);
   return from && to ? `${from} → ${to}` : motion.label;
+}
+
+/**
+ * Whether a row's label already ends with the way the motion faces — "Attack
+ * · right", the `<State> · <direction>` label a directional motion is given —
+ * so the rail does not say the direction twice. The label is the agent's
+ * words and the rail's direction text the locale's, so either counts, as the
+ * label's last word: "Upright" does not end with "right".
+ */
+export function labelNamesDirection(label: string, direction: Direction | undefined, localized?: string): boolean {
+  if (!direction) return false;
+  const text = label.trim().toLowerCase();
+  return [direction, localized].some((word) => {
+    const w = word?.trim().toLowerCase();
+    if (!w || !text.endsWith(w)) return false;
+    const before = text.charAt(text.length - w.length - 1);
+    return before === "" || !/[a-z0-9]/.test(before);
+  });
 }
 
 /**
@@ -175,15 +194,40 @@ export function loopExports(
 
 // ── The Export tab ─────────────────────────────────────────────────────────
 
-/** The three sections of the tab, in order. */
-export type ExportFamily = "video" | "frames" | "rive";
+/** The three sections of the tab: this motion as a video, this motion as
+ *  frames, and the files that hold the whole character. */
+export type ExportFamily = "video" | "frames" | "character";
 
 /**
- * Every format the tab lists. The first six are what `sprite-sheet.mjs
- * export` writes on demand (`ExportFormat`); `gif`, `webp` and `sheet` are
- * made by every run of a motion, and `riv` belongs to the whole character.
+ * The order the tab lists its sections in, by what the character is for
+ * (`character.purpose`): a game character's first need is the frames an
+ * engine loads, a mascot's is the whole-character file its app drives. Every
+ * other character — a loop, a picture brought to life, one whose route was
+ * never recorded — keeps the order the tab always had.
  */
-export type ExportRowFormat = ExportFormat | "gif" | "webp" | "sheet" | "riv";
+export function exportFamilyOrder(purpose: CharacterPurpose | undefined): ExportFamily[] {
+  switch (purpose) {
+    case "game":
+      return ["frames", "video", "character"];
+    case "mascot":
+      return ["character", "video", "frames"];
+    default:
+      return ["video", "frames", "character"];
+  }
+}
+
+/**
+ * Every format the tab lists. `ExportFormat` is what `sprite-sheet.mjs
+ * export` writes for one motion on demand; `gif`, `webp` and `sheet` are made
+ * by every run of a motion; `riv` and `character-aseprite` (every sprite
+ * motion on one Aseprite sheet) belong to the whole character; `colourway`
+ * is one of a pixel-art character's colourways, baked by `recolor` (one row
+ * per colourway, named by `ExportRow.variant`).
+ */
+export type ExportRowFormat = ExportFormat | "gif" | "webp" | "sheet" | "riv" | "character-aseprite" | "colourway";
+
+/** The rows that are the whole character's, not one motion's. */
+const CHARACTER_ROWS: ReadonlySet<ExportRowFormat> = new Set(["riv", "character-aseprite"]);
 
 /** Why a format is not offered, said to the user as a sentence (strings.ts). */
 export type ExportNotOffered =
@@ -197,6 +241,8 @@ export type ExportNotOffered =
   | "transition-atlas"
   /** The .riv the defaults would make is past what a runtime can open. */
   | "too-heavy"
+  /** The character's Aseprite sheet holds sprite motions, and none is ready. */
+  | "no-sprite-motion"
   /** The scripts export a ready motion and nothing else. */
   | "not-ready"
   /** A file every run makes, and this run did not (a `--no-webp` run). */
@@ -246,8 +292,26 @@ export interface ExportRow {
   video?: ExportRepeat;
   /** MP4 once made: the colour it was flattened onto. */
   background?: string;
+  /** A made file carries a ground shadow (`export --shadow`): cast into a
+   *  video's frames, or a shadow sheet beside an Aseprite one. */
+  shadow?: boolean;
   /** The .riv: see `RiveRowFacts`. */
   rive?: RiveRowFacts;
+  /** The character's Aseprite sheet: see `SheetRowFacts`. */
+  sheet?: SheetRowFacts;
+  /** A `colourway` row: the colourway's name. */
+  variant?: string;
+}
+
+/**
+ * What the character's Aseprite row knows: the sprite motions the sheet
+ * holds (once made: what its edge recorded; before: every ready sprite
+ * motion, what a Generate would put on it), and the ready ones a made sheet
+ * lacks.
+ */
+export interface SheetRowFacts {
+  motions: string[];
+  missing: string[];
 }
 
 /**
@@ -351,7 +415,7 @@ export function exportKey(
   format: ExportRowFormat,
 ): string {
   const character = project.contentSet || ".";
-  return format === "riv" ? `${character}::riv` : `${character}::${motion?.id ?? ""}:${format}`;
+  return CHARACTER_ROWS.has(format) ? `${character}::${format}` : `${character}::${motion?.id ?? ""}:${format}`;
 }
 
 /** `#1a2b3c`, from what a person types: `#1A2B3C`, `1a2b3c`, `#fff`. Null for
@@ -386,6 +450,18 @@ function readyFiles(project: CharacterProject, ids: Array<string | undefined>): 
     files.push(fileOf(asset));
   }
   return files.length > 0 ? files : null;
+}
+
+/** The motions a character-wide export holds, off its edge's `params.motions`. */
+function heldMotions(project: CharacterProject, assetId: string): string[] {
+  const motions = project.provenance.find((e) => e.toAssetId === assetId)?.operation.params?.motions;
+  return Array.isArray(motions) ? motions.filter((m): m is string => typeof m === "string") : [];
+}
+
+/** A made export's asset says it carries a shadow. */
+function hasShadow(asset: SpriteAsset | undefined): boolean {
+  const shadow = asset?.metadata.shadow;
+  return !!shadow && typeof shadow === "object";
 }
 
 /** The registered `.riv`'s record, read off its provenance edge: the motions
@@ -486,8 +562,8 @@ export function riveMotions(project: CharacterProject): Motion[] {
  * `inspect.scale`, else (a loop) what an earlier export measured
  * (`motion.clip`, written by `register-export`); a loop with neither is
  * quoted as cut until its first export measures it. A reverse shares its
- * source's images when `riveReverseIsCurrent` says so — the script's own
- * test.
+ * source's images when `riveReverseIsCurrent` says so, a mirror when
+ * `riveMirrorIsCurrent` does — the script's own tests.
  */
 export function rivePlanFor(project: CharacterProject): RivePlan | null {
   const motions = riveMotions(project);
@@ -504,6 +580,8 @@ export function rivePlanFor(project: CharacterProject): RivePlan | null {
       : m.kind === "transition" ? m.inspect?.scale : undefined;
     const source = m.kind === "transition" && m.reverseOf ? byId.get(m.reverseOf) : undefined;
     const shares = source && riveReverseIsCurrent(m, source, lookup) ? source.id : undefined;
+    const flipped = m.source === "mirror" && m.mirrorOf ? byId.get(m.mirrorOf) : undefined;
+    const mirrors = flipped && riveMirrorIsCurrent(m, flipped, lookup) ? flipped.id : undefined;
     return size
       ? {
         id: m.id,
@@ -514,6 +592,7 @@ export function rivePlanFor(project: CharacterProject): RivePlan | null {
         ...size,
         ...(clipScale ? { clipScale } : {}),
         ...(shares ? { reverseOf: shares } : {}),
+        ...(mirrors ? { mirrorOf: mirrors } : {}),
       }
       : null;
   });
@@ -550,7 +629,7 @@ export function exportRows(
     builtIn: boolean,
     extra: Partial<ExportRow> = {},
   ) => {
-    const key = exportKey(project, format === "riv" ? null : motion, format);
+    const key = `${exportKey(project, CHARACTER_ROWS.has(format) ? null : motion, format)}${extra.variant ? `:${extra.variant}` : ""}`;
     const current = exportStamp(state);
     const requested =
       options.requests.has(key) && options.requests.get(key) === current && state.kind !== "not-offered";
@@ -586,8 +665,9 @@ export function exportRows(
         ? { kind: "missing" }
         : notOffered("not-ready");
     const extra: Partial<ExportRow> = {};
+    const asset = files ? project.assetsById.get(files[0].assetId) : undefined;
+    if (hasShadow(asset)) extra.shadow = true;
     if (VIDEO_FORMATS.has(format)) {
-      const asset = files ? project.assetsById.get(files[0].assetId) : undefined;
       const repeat = finiteOrNull(asset?.metadata.repeat);
       const duration = finiteOrNull(asset?.metadata.duration);
       if (asset && !own && repeat !== null && duration !== null) {
@@ -619,6 +699,19 @@ export function exportRows(
   if (loop) push("frames", "sheet", notOffered("loop-atlas"), false);
   else if (transition) push("frames", "sheet", notOffered("transition-atlas"), false);
   else builtInRow("frames", "sheet", [motion.sheet, motion.atlas]);
+  // The same sheet re-described for engines that build animations from
+  // Aseprite JSON — so, like the atlas, never a loop's or a transition's.
+  if (loop) push("frames", "aseprite", notOffered("loop-atlas"), false);
+  else if (transition) push("frames", "aseprite", notOffered("transition-atlas"), false);
+  else onDemandRow("frames", "aseprite");
+  // A pixel-art character's colourways: this motion's sheet, atlas and
+  // preview baked in each (`recolor` + `register-recolor`), listed once they
+  // exist. The colours are the agent's call, so nothing here asks for one.
+  for (const variant of project.sprite.character.pixel?.variants ?? []) {
+    const files = motion.variants?.[variant.name];
+    const made = files ? readyFiles(project, [files.sheet, files.atlas, ...(files.gif ? [files.gif] : [])]) : null;
+    if (made) push("frames", "colourway", { kind: "ready", files: made }, true, { variant: variant.name });
+  }
 
   // Rive — the whole character: every motion `riveMotions` names, as
   // `rivePlanFor` plans it; transitions counted apart from the motions.
@@ -636,7 +729,7 @@ export function exportRows(
     const record = rivRecord(project, rivId);
     const decodeBytes = finiteOrNull(project.assetsById.get(rivId)?.metadata.estimatedDecodeBytes);
     const loopIds = new Set(holdable.filter((m) => m.kind === "loop").map((m) => m.id));
-    push("rive", "riv", { kind: "ready", files: rivFiles }, false, {
+    push("character", "riv", { kind: "ready", files: rivFiles }, false, {
       canGenerate: options.canRequest && !tooHeavy,
       rive: {
         ...split(record.motions),
@@ -648,7 +741,7 @@ export function exportRows(
       },
     });
   } else {
-    push("rive", "riv", !ready ? notOffered("not-ready") : tooHeavy ? notOffered("too-heavy") : { kind: "missing" }, false, {
+    push("character", "riv", !ready ? notOffered("not-ready") : tooHeavy ? notOffered("too-heavy") : { kind: "missing" }, false, {
       rive: {
         ...split(holdable.map((m) => m.id)),
         missing: [],
@@ -657,6 +750,27 @@ export function exportRows(
         tooHeavy,
       },
     });
+  }
+
+  // The character's sprite motions on one Aseprite sheet, a frame tag each —
+  // `export <character> --format aseprite`: every ready sprite motion.
+  const sheetable = project.sprite.motions.filter((m) => m.status === "ready" && !m.kind).map((m) => m.id);
+  const sheetId = project.sprite.exports?.aseprite;
+  const sheetFiles = sheetId ? readyFiles(project, [sheetId]) : null;
+  if (sheetFiles && sheetId) {
+    const held = heldMotions(project, sheetId);
+    push("character", "character-aseprite", { kind: "ready", files: sheetFiles }, false, {
+      sheet: { motions: held, missing: sheetable.filter((id) => !held.includes(id)) },
+      ...(hasShadow(project.assetsById.get(sheetId)) ? { shadow: true } : {}),
+    });
+  } else {
+    push(
+      "character",
+      "character-aseprite",
+      !ready ? notOffered("not-ready") : sheetable.length ? { kind: "missing" } : notOffered("no-sprite-motion"),
+      false,
+      { sheet: { motions: sheetable, missing: [] } },
+    );
   }
 
   // Without an agent to ask, a row that is not a download is noise.
@@ -680,18 +794,28 @@ export function exportRequestNotification(request: {
   label: string;
   /** The Rive row's facts: the motions to put in, and the plan for loops. */
   rive?: RiveRowFacts;
+  /** The character sheet row's facts: the motions it would hold. */
+  sheet?: SheetRowFacts;
 }): ViewerNotification {
-  const { project, motion, format, background, label, rive } = request;
+  const { project, motion, format, background, label, rive, sheet } = request;
   const riv = format === "riv";
+  const whole = CHARACTER_ROWS.has(format);
+  const characterSheet = format === "character-aseprite";
   const facts = [
     "command: export",
     `character: ${project.contentSet || "."}`,
-    !riv && motion ? `motion: ${motion.id}` : null,
-    `format: ${format}`,
+    !whole && motion ? `motion: ${motion.id}` : null,
+    // The whole character's sheet is the aseprite format given the
+    // character's directory; the scope line is what tells it from one motion's.
+    `format: ${characterSheet ? "aseprite" : format}`,
+    characterSheet ? "scope: whole character — every ready sprite motion on one sheet" : null,
+    characterSheet && sheet?.motions.length ? `motions: ${sheet.motions.join(",")}` : null,
     format === "mp4" && background ? `background: ${background}` : null,
     // Named rather than left to the script's default, so the agent sees what
     // the button asked for.
-    riv ? `images: ${riveDefaultImages(project.sprite.character.style)}` : null,
+    // `character.pixel` first, the style sentence for a character without
+    // one (`riveIsPixelArt`).
+    riv ? `images: ${riveDefaultImages(project.sprite.character)}` : null,
     riv && rive?.motions.length ? `motions: ${rive.motions.join(",")}` : null,
     riv && rive?.transitions.length ? `transitions: ${rive.transitions.join(",")}` : null,
     // The settings a Generate asks for — the defaults — not what any one
@@ -702,7 +826,7 @@ export function exportRequestNotification(request: {
   return {
     type: "sprite-command:export",
     severity: "warning",
-    summary: `/export · ${riv || !motion ? project.sprite.character.name : motion.label} · ${format}`,
+    summary: `/export · ${whole || !motion ? project.sprite.character.name : motion.label} · ${characterSheet ? "aseprite" : format}`,
     message: [
       `The user pressed "${label}" on the sprite stage's Export tab.`,
       facts.join(" · "),
