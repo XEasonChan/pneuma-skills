@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.55.0] - 2026-09-27
+
+### Added
+- **Sprite follows what you are making.** There are four routes: a move set for a game, your own picture brought to life, a looping animation for a page, or a mascot for an app. The route decides the few plain questions the agent asks, which motions it offers and where it stops. The stage header shows what each route needs.
+- **Bring a picture to life.** Upload a still and it breathes within seconds, with no model call. The body swells along a row you can see, the head rises and falls with each breath, and the motion records how far.
+- **Pixel art that stays pixel art.** Every sheet snaps to a true pixel grid at the height you chose, and one palette covers all motions. A sheet drawn at a different size is corrected or refused before anything is written. Colourways, such as a red team and a blue team, come as extra downloads.
+- **Four-direction characters.** One reference per facing keeps every sheet on-model. The other side is mirrored for free, or drawn separately when something is on one side only. For each facing, the prompt says which of the character's hands is nearer the viewer.
+- **Game-engine export.**
+  - An Aseprite-format sheet (PNG + JSON) of one motion or the whole character loads in Phaser with one call.
+  - Atlases carry the `anchor` that PixiJS uses to stand a sprite on its feet.
+  - A ground shadow is optional.
+- **Measured sizes.** `sizes` compares a character's standing height across its motions, so "they're all the same size" is a measurement, not a guess.
+
+### Improved
+- **Cleaner green-screen edges.**
+  - The keyer removes the plate colour from every edge pixel, reading each one against the character's own colours, so warm hair and fur no longer keep a yellow-green rim.
+  - The keyer removes floor shadows painted by the video model.
+  - `keyFringe` measures what is left.
+- **Sheets are cut along the drawing.** When a generated sheet's poses cross its grid lines, each frame is found by the pixels it covers and repacked. On a real attack sheet, clipped frames went from 8 of 16 to 0.
+- **Jumps keep their height** when drawn on a baseline or shot with room, and the motion records how high it lifts.
+- **Clips are read more accurately.** A walk's full stride, a one-off action and a clip that never repeats are told apart, and near-still loops are no longer padded with extra frames.
+- **The agent works in the open.**
+  - It states the price and the wait before each paid call, and cut-out and Seedance calls print what they cost.
+  - It writes every progress note in your language.
+  - It watches each motion on the stage before saying it is done, and looks again when you say something is wrong.
+- **Credits.** Methods ported from [aldegad/sprite-gen](https://github.com/aldegad/sprite-gen) (Apache-2.0), and the perfectpixel-studio work behind them, are credited in the mode's `NOTICE.md`.
+
+### Fixed
+- **Mirrored motions keep their source's timing.** A mirrored looping idle had played once, at the planned rate.
+- **Motions sampled from a video take the frame grid and frame rate of the run** instead of the planned ones.
+- **The Sprite stage shows the right things for each route.** A picture brought to life no longer shows a declared size and facing, all of a character's motions share one scale, and a reference registered a moment ago is waited for instead of refused.
+
 ## [3.54.0] - 2026-09-25
 
 ### Added
