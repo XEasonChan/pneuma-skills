@@ -1,0 +1,132 @@
+{
+  "units": "seconds",
+  "fps": 30,
+  "title": "Seed example (a fictional product, ACME)",
+  "formats": [
+    "short-16x9",
+    "short-9x16",
+    "full-16x9"
+  ],
+  "languages": [
+    "en",
+    "ja",
+    "en-jasub"
+  ],
+  "ground": "soft",
+  "brand": {
+    "display": "ACME",
+    "match": [
+      "Acme"
+    ]
+  },
+  "scenes": [
+    {
+      "id": "hook",
+      "type": "text-screen",
+      "len": 3.2,
+      "props": {
+        "lines": [
+          {
+            "text": {
+              "en": "Where did that file go?",
+              "ja": "あの資料、 どこだっけ？"
+            },
+            "keys": [
+              {
+                "en": "file",
+                "ja": "あの資料、"
+              }
+            ]
+          }
+        ]
+      },
+      "vo": {
+        "en": "Where did that file go?",
+        "ja": "あの資料、どこだっけ？"
+      },
+      "onScreen": {
+        "en": "Where did that file go?",
+        "ja": "あの資料、どこだっけ？"
+      },
+      "notes": "the problem, typed: one line, one key word"
+    },
+    {
+      "id": "proof",
+      "type": "footage-card",
+      "len": 4.5,
+      "props": {
+        "src": "kit:placeholder/still.svg",
+        "label": {
+          "en": "Every file, one search",
+          "ja": "すべての資料を、ひとつの検索で"
+        }
+      },
+      "vo": {
+        "en": "Acme finds it across every app your team uses.",
+        "ja": "Acmeなら、チームのどのアプリからでも見つかります。"
+      },
+      "notes": "replace src with the run's footage or a still from assets/; a run's product UI goes in a custom scene (remotion/src/custom/)"
+    },
+    {
+      "id": "promise",
+      "type": "text-screen",
+      "len": 3.4,
+      "transitionOut": "carry",
+      "props": {
+        "lines": [
+          {
+            "text": {
+              "en": "Ask once.",
+              "ja": "一度、 聞くだけ。"
+            },
+            "keys": [
+              {
+                "en": "once.",
+                "ja": "一度、"
+              }
+            ]
+          },
+          {
+            "text": {
+              "en": "Get the answer.",
+              "ja": "答えが 届く。"
+            },
+            "keys": [
+              {
+                "en": "answer.",
+                "ja": "答えが"
+              }
+            ]
+          }
+        ],
+        "exit": 0.6
+      },
+      "vo": {
+        "en": "Ask once. Get the answer.",
+        "ja": "一度聞くだけで、答えが届く。"
+      }
+    },
+    {
+      "id": "lockup",
+      "type": "logo-lockup",
+      "len": 3.9,
+      "props": {
+        "logo": "kit:placeholder/mark.svg",
+        "wordmark": "ACME",
+        "tagline": {
+          "en": "Find anything your team knows.",
+          "ja": "チームが知っていることを、すぐに。"
+        },
+        "note": {
+          "en": "Fictional product for illustration.",
+          "ja": "説明用の架空の製品です。"
+        }
+      },
+      "vo": {
+        "en": "Acme. Find anything your team knows.",
+        "ja": "Acme。チームの知識を、すぐに。"
+      },
+      "notes": "the run's own logo goes in assets/brand/ and `logo` points at it"
+    }
+  ]
+}

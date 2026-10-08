@@ -1,0 +1,21 @@
+{
+  "name": "launch-run-remotion",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "link": "node scripts/link.mjs",
+    "studio": "node scripts/link.mjs && remotion studio src/index.ts",
+    "render": "node render.mjs",
+    "typecheck": "node scripts/link.mjs && tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.459",
+    "remotion": "4.0.459",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

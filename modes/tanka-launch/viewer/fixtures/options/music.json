@@ -1,0 +1,33 @@
+[
+  {
+    "id": "A",
+    "title": "Steady pulse",
+    "summary": "Library placeholder bed, 92→118 BPM, lifts at the morning scene.",
+    "recommended": true,
+    "files": [
+      "stages/music/options/A.json",
+      "stages/music/options/A-bed.mp3",
+      "stages/music/options/A-guide.mp3"
+    ]
+  },
+  {
+    "id": "B",
+    "title": "Calm arc",
+    "summary": "Video-to-Music, 100→110 BPM, the calmest — natural pauses for JA.",
+    "files": [
+      "stages/music/options/B.json",
+      "stages/music/options/B-bed.mp3",
+      "stages/music/options/B-guide.mp3"
+    ]
+  },
+  {
+    "id": "C",
+    "title": "Drive",
+    "summary": "Composed, 118–124 BPM, fastest cuts for the US edit.",
+    "files": [
+      "stages/music/options/C.json",
+      "stages/music/options/C-bed.mp3",
+      "stages/music/options/C-guide.mp3"
+    ]
+  }
+]

@@ -1,0 +1,29 @@
+{
+ "id": "placeholder-drive",
+ "title": "Placeholder · driving groove (procedural)",
+ "bpm": 120.0,
+ "key": "E minor",
+ "sfxSet": "E",
+ "placeholder": {
+  "bpm": 120,
+  "bars": 24,
+  "key": "E",
+  "minor": true,
+  "introBars": 4,
+  "seed": 3,
+  "airy": false
+ },
+ "description": "Faster minor-key groove with the same kit as the pulse.",
+ "recommended_for": "a faster contrast bed",
+ "provider": "procedural",
+ "mode": "placeholder",
+ "model": "scripts/common/placeholder_beds.py",
+ "tags": [
+  "placeholder"
+ ],
+ "shelf_5k_minus4db": false,
+ "licenceSafe": true,
+ "licence": "Procedural placeholder synthesised locally by placeholder_beds.py (no samples, no provider). For rehearsals and tests; replace with the run's own licensed bed before release.",
+ "source": "synthesised on first use into the cache dir ($TL_CACHE_DIR)",
+ "file": "placeholder-drive.flac"
+}

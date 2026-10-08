@@ -1,0 +1,5 @@
+[
+  { "id": "A", "title": "Warm pair", "summary": "JA warm, unhurried · EN Samantha, clear US read.", "recommended": true, "files": ["stages/voice/options/ja-A.json", "stages/voice/options/en-A.json"] },
+  { "id": "B", "title": "Calm pair", "summary": "JA slower (0.94×) · EN Daniel, British and low.", "files": ["stages/voice/options/ja-B.json", "stages/voice/options/en-B.json"] },
+  { "id": "C", "title": "Bright pair", "summary": "JA brighter · EN Karen, quick and light.", "files": ["stages/voice/options/ja-C.json", "stages/voice/options/en-C.json"] }
+]

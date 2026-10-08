@@ -1,0 +1,27 @@
+[
+  {
+    "id": "A",
+    "title": "Lost file",
+    "summary": "Question → gap → Acme searches every app → sourced answer. The clearest product story.",
+    "files": [
+      "stages/script/options/A.json"
+    ]
+  },
+  {
+    "id": "B",
+    "title": "Late request",
+    "summary": "11 pm, empty office: a sourced draft waits for its owner in the morning. Strongest for the JP preset: the owner stays in charge.",
+    "recommended": true,
+    "files": [
+      "stages/script/options/B.json"
+    ]
+  },
+  {
+    "id": "C",
+    "title": "One question, three teams",
+    "summary": "Sales, support and finance answer from the same sources. Densest; best for the US cut.",
+    "files": [
+      "stages/script/options/C.json"
+    ]
+  }
+]

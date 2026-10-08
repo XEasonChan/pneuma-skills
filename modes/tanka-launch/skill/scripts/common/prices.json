@@ -1,0 +1,28 @@
+{
+ "_note": "Assumed prices for the budget gate (estimates BEFORE a call; `ledger reserve` compares them with the run cap). Deliberately on the high side. Re-check against the provider's pricing page before quoting totals. Last reviewed 2026-09-28.",
+ "elevenlabs": {
+  "tts_usd_per_1k_chars": 0.30,
+  "tts_basis": "eleven_v3 billed ~1 credit/char at list; ~$0.30 per 1k credits on Creator/Pro top-ups. Measured on 2026-09-27: 9,001 chars -> 2,473 credits (0.27 credit/char), so real spend is usually ~4x lower.",
+  "music_usd_per_min": 0.60,
+  "music_basis": "Eleven Music compose / video-to-music: ~900 credits per minute (2026-09-27 V2M runs); fal lists elevenlabs/music v2.5 at $0.60/min, taken as the ceiling.",
+  "v2m_usd_per_min": 0.60,
+  "sfx_usd_per_call": 0.03,
+  "sfx_basis": "sound-generation ~100 credits per call",
+  "min_charge_usd": 0.01
+ },
+ "fal": {
+  "seedance_2_5_usd_per_1k_tokens": {"480p": 0.0214, "720p": 0.0214, "1080p": 0.0234},
+  "seedance_tokens": "width x height x seconds x 24 / 1024 (fal's published formula; with reference VIDEOS the rate is x0.6 and their duration is billed too)",
+  "seedance_720p_16x9_usd_per_s": 0.4623,
+  "seedance_1080p_16x9_usd_per_s": 1.1372,
+  "basis": "fal pricing API for bytedance/seedance-2.5, read 2026-09-27 (pneuma _shared/seedance-video.mjs)"
+ },
+ "openrouter": {
+  "gpt_image_usd_per_image": {"low": 0.05, "medium": 0.12, "high": 0.25},
+  "basis": "openai/gpt-image-2.5-* via OpenRouter Images API; assumed per image at 1024-1536 px"
+ },
+ "codex": {
+  "image_usd_per_call": 0.0,
+  "basis": "codex exec image_generation runs on the ChatGPT plan's quota (no per-call bill); recorded in the ledger at $0 so the calls are still counted"
+ }
+}

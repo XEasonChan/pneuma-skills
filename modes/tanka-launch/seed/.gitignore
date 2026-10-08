@@ -1,0 +1,32 @@
+# Pneuma session state and installed skills (the skill .env holds API keys)
+.pneuma/
+.claude/
+.agents/
+.env
+**/.env
+CLAUDE.md
+AGENTS.md
+
+# tl.mjs lock and backups
+.tl.lock
+.tl/
+*.tmp-*
+
+# Dependencies and render caches
+node_modules/
+remotion/node_modules
+remotion/kit/
+remotion/.cache/
+remotion/.bundle/
+remotion/public/kit
+remotion/public/run/
+**/frames/
+.tl-tmp/
+
+# Large media is kept out of git; the ledger, film.json and stage JSON stay in.
+out/**/*.mp4
+out/**/*.m4a
+**/*.wav
+**/*.flac
+stages/**/work/
+assets/footage/

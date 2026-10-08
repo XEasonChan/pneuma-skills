@@ -1,0 +1,95 @@
+{
+ "_note": "Audition pool (ElevenLabs, eleven_v3): an EDITABLE PRESET with example entries, kept in step with references/launch-vo.md 'Voice stage'. Replace every voiceId with a voice from your own ElevenLabs library before a real (non-mock) run; a REPLACE_ placeholder is refused by common/el.py. The FIRST entry per language is the locked voice (recommended); the others are alternatives one dimension apart. `retired` holds superseded voices: voice/audition.py offers them only with --include-retired (lookups by id still resolve them, so an old run's pick keeps working). mock = the local TTS stand-in in mock mode (a macOS `say` voice; espeak-ng variants on Linux). spell = how the TTS text spells the brand for that voice (display text keeps the brand's display form).",
+ "settings": {
+  "ja": {
+   "stability": 0.5,
+   "similarity_boost": 0.75,
+   "style": 0.3,
+   "use_speaker_boost": true
+  },
+  "en": {
+   "stability": 0.5,
+   "similarity_boost": 0.75,
+   "style": 0.35,
+   "use_speaker_boost": true
+  }
+ },
+ "prefix_tag": {
+  "ja": "[speaking slowly and gently] ",
+  "en": ""
+ },
+ "sample_line": {
+  "ja": "チームの記憶を持つ、先回りするアシスタント。ACMEに登場。",
+  "en": "A proactive assistant, with your team's memory. Now in ACME."
+ },
+ "pool": {
+  "ja": [
+   {
+    "id": "narrator",
+    "voiceId": "REPLACE_WITH_JA_NARRATOR_VOICE_ID",
+    "name": "JA narrator (example)",
+    "why": "the locked JA voice: a calm, mid-range narrator read with the slow-and-gentle tag",
+    "mock": "Kyoko"
+   },
+   {
+    "id": "measured",
+    "voiceId": "REPLACE_WITH_JA_MEASURED_VOICE_ID",
+    "name": "JA measured (example)",
+    "why": "alternative: a more measured, corporate read",
+    "mock": "Reed (Japanese (Japan))"
+   },
+   {
+    "id": "soft",
+    "voiceId": "REPLACE_WITH_JA_SOFT_VOICE_ID",
+    "name": "JA soft (example)",
+    "why": "alternative: a soft, lighter read",
+    "mock": "Shelley (Japanese (Japan))"
+   }
+  ],
+  "en": [
+   {
+    "id": "calm",
+    "voiceId": "REPLACE_WITH_EN_CALM_VOICE_ID",
+    "name": "EN calm (example)",
+    "why": "the locked EN voice: calm, premium, unhurried",
+    "mock": "Samantha"
+   },
+   {
+    "id": "bright",
+    "voiceId": "REPLACE_WITH_EN_BRIGHT_VOICE_ID",
+    "name": "EN bright (example)",
+    "why": "alternative: brighter and faster",
+    "mock": "Karen"
+   },
+   {
+    "id": "uk",
+    "voiceId": "REPLACE_WITH_EN_UK_VOICE_ID",
+    "name": "EN modern UK (example)",
+    "why": "alternative: male, modern UK",
+    "mock": "Daniel"
+   }
+  ]
+ },
+ "retired": {
+  "ja": [
+   {
+    "id": "old-narrator",
+    "voiceId": "REPLACE_WITH_RETIRED_JA_VOICE_ID",
+    "name": "JA retired (example)",
+    "why": "SUPERSEDED (launch-vo.md): kept so an old run's pick still resolves",
+    "mock": "Flo (Japanese (Japan))",
+    "retired": "2026-01-01"
+   }
+  ],
+  "en": [
+   {
+    "id": "old-calm",
+    "voiceId": "REPLACE_WITH_RETIRED_EN_VOICE_ID",
+    "name": "EN retired (example)",
+    "why": "SUPERSEDED (launch-vo.md): kept so an old run's pick still resolves",
+    "mock": "Moira",
+    "retired": "2026-01-01"
+   }
+  ]
+ }
+}

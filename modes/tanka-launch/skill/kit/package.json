@@ -1,0 +1,20 @@
+{
+  "name": "launch-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Launch Studio's Remotion kit: scene grammar, renderer, captions, a neutral ground, hand-off primitives and generic scenes.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./preview": "./src/Preview.tsx",
+    "./assets/*": "./assets/*",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "remotion": "4.0.459",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}

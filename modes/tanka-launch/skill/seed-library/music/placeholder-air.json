@@ -1,0 +1,29 @@
+{
+ "id": "placeholder-air",
+ "title": "Placeholder · airy build (procedural)",
+ "bpm": 92.0,
+ "key": "D major",
+ "sfxSet": "A",
+ "placeholder": {
+  "bpm": 92,
+  "bars": 24,
+  "key": "D",
+  "minor": false,
+  "introBars": 2,
+  "seed": 2,
+  "airy": true
+ },
+ "description": "Airy major-key pad with a light half-time kick; a calmer contrast to the pulse.",
+ "recommended_for": "a calmer contrast bed",
+ "provider": "procedural",
+ "mode": "placeholder",
+ "model": "scripts/common/placeholder_beds.py",
+ "tags": [
+  "placeholder"
+ ],
+ "shelf_5k_minus4db": false,
+ "licenceSafe": true,
+ "licence": "Procedural placeholder synthesised locally by placeholder_beds.py (no samples, no provider). For rehearsals and tests; replace with the run's own licensed bed before release.",
+ "source": "synthesised on first use into the cache dir ($TL_CACHE_DIR)",
+ "file": "placeholder-air.flac"
+}

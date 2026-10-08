@@ -1,0 +1,52 @@
+{
+  "tagline": {
+    "en": "From one idea to finished launch films, with the rough cut as the one hard gate",
+    "zh-CN": "从一个想法到成片的发布视频，粗剪是唯一的硬关卡",
+    "ja": "ひとつのアイデアから完成したローンチ動画へ。粗編集だけが唯一の関門"
+  },
+  "hero": "hero.png",
+  "highlights": [
+    {
+      "title": {
+        "en": "Every Stage, Three Options",
+        "zh-CN": "每一步，三个选项",
+        "ja": "各ステージに三つの選択肢"
+      },
+      "description": {
+        "en": "Script, music, voice, VO, assets, picture and sound each land on the canvas as options that differ in one dimension, with the recommended one marked and a countdown running. Pick one, or let the countdown take the recommendation — and every status is derived from a hash of the stage's files, so an edit after approval shows up as changed.",
+        "zh-CN": "脚本、音乐、声音、旁白、素材、画面和声音设计，每一步都以只差一个维度的几个选项落在画布上，标出推荐项并开始倒计时。你可以自己挑，也可以让倒计时替你选推荐项；每一步的状态都由它的文件哈希推导，批准之后再改，就会显示为“已改动”。",
+        "ja": "脚本・音楽・声・VO・素材・映像・サウンドは、ひとつの次元だけが違う選択肢としてキャンバスに並び、推奨案に印が付いてカウントダウンが始まります。自分で選んでも、カウントダウンに推奨案を取らせても構いません。状態はステージのファイルのハッシュから導かれるので、承認後の編集は「変更あり」として現れます。"
+      },
+      "media": "highlight-script.png",
+      "mediaType": "image"
+    },
+    {
+      "title": {
+        "en": "Music First, One Clock",
+        "zh-CN": "音乐先行，一个时钟",
+        "ja": "音楽が先、時計はひとつ"
+      },
+      "description": {
+        "en": "Three music options — one grid, per-scene BPM, or a contrast bed — each put the scenes on whole bars of its own grid and come with a guide-VO demo. The picked bed's windows become the film's one clock: the VO is fitted into them and the picture lands its cuts on the beat.",
+        "zh-CN": "三种音乐方案——单一网格、逐场景 BPM、对比曲——各自把场景排在自己网格的整小节上，并附带引导旁白的小样。选中那条的时间窗就成了整部片子唯一的时钟：旁白嵌进去，画面的剪辑点踩在拍子上。",
+        "ja": "三つの音楽案——ワングリッド、シーンごとの BPM、対照的なベッド——はそれぞれ自分のグリッドの小節単位でシーンを並べ、ガイド VO 付きのデモが付きます。選んだベッドの区間がその作品のただひとつの時計になり、VO はそこに収まり、映像のカットは拍に乗ります。"
+      },
+      "media": "highlight-music.png",
+      "mediaType": "image"
+    },
+    {
+      "title": {
+        "en": "The Rough Cut Is the Gate",
+        "zh-CN": "粗剪就是关卡",
+        "ja": "粗編集が関門"
+      },
+      "description": {
+        "en": "Auto-run and countdowns can carry a run all the way to the rough cut, never past it. The rough cut arrives with its QC — duration, loudness, the read check, the brand spelling, the caption band — and only the producer's approval releases finals, the other formats and languages, and delivery. Paid calls stop at the budget cap even during auto-run.",
+        "zh-CN": "自动运行和倒计时最多把整个流程推到粗剪，绝不越过。粗剪带着质检一起到来——时长、响度、朗读校验、品牌写法、字幕区——只有制片人的批准才会放行终版、其他格式与语言以及交付。即使在自动运行中，付费调用一到预算上限就会停下。",
+        "ja": "自動実行とカウントダウンは粗編集まで進められますが、その先へは決して進みません。粗編集は QC（尺、ラウドネス、読み上げチェック、ブランド表記、字幕帯）と一緒に届き、プロデューサーの承認だけが本編集・他フォーマットと言語・納品を解放します。有料の呼び出しは自動実行中でも予算上限で止まります。"
+      },
+      "media": "highlight-gate.png",
+      "mediaType": "image"
+    }
+  ]
+}

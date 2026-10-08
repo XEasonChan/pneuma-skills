@@ -84,6 +84,7 @@
 | **sprite** | 角色动作素材，按你要做的东西分成几条路线：给游戏做一套角色动作、让你自己的一张图动起来、给网页做一段循环动画，或者给 App 做个吉祥物。角色只定一次（也可以直接用你的图），每个动作再从带着角色参考图生成的精灵图、或在纯绿背景上拍的视频里取帧：按人物实际画到的位置切帧，让脚踩在同一个点上（跳跃保留起跳高度），用解混合抠像去掉绿边，最后打包成 Phaser、PixiJS 直接能读的 `atlas.json` 或 Aseprite 格式的帧表。一张静态图就能做出呼吸待机，不调用模型；像素画对齐到像素网格、锁定调色板，还能换出几套配色；四个朝向的角色可以镜像出另一侧，也可以单独画。界面循环动画导出 WebP、APNG、WebM 和 Lottie，任何动作都能导出 MP4、MOV、WebM、APNG、Lottie 或 PNG 序列，整个角色能导成一个 Rive 文件。抠像、循环检测、像素网格、切帧和呼吸动画的方法移植自 [aldegad/sprite-gen](https://github.com/aldegad/sprite-gen) |
 | **lucid** | 一场画面与程序之间的闭环 —— agent 先用图像生成把成品截图「梦」出来并锁死，再用 Three.js 静态场景一轮轮往那张图上追；每一轮都由一个没看过前情的评审按构图、光照、材质、细节打分，直到实时画面真的对上；素材阶梯上还有 Blender 与图生 3D。移植自 [achimala/dream-loop](https://github.com/achimala/dream-loop)（MIT） |
 | **backlot** | 片场 —— 从一个念头拍到成片：剧本、人物与场景设定、分镜画稿、3D 白模预演、模型渲染的镜头、台词与配乐；每一道工序都要你点头才进下一道。白模那一关先把空间、动作和运镜定死，再让视频模型在它之上把质感画出来。做法改编自 [modengsir/blender-video-workflows](https://github.com/modengsir/blender-video-workflows)（MIT） |
+| **tanka-launch** | 发布视频工作室 —— 把一个想法或卖点做成完整的发布视频：脚本、音乐与节奏、声音、旁白、素材、画面和声音设计都以选项的形式落在节点画布上，每一步都有倒计时，自动运行最多推进到粗剪，粗剪是唯一的硬关卡，之后才母带处理并交付全部格式与语言。音乐先行，成为整部片子唯一的时钟；每次付费调用都按每次运行的预算上限计价；模拟模式可以零成本走完整条流程 |
 | **mode-maker** | 用 AI 做自定义 mode —— fork、Play 试跑、发布 |
 | **evolve** | Evolution Agent —— 分析历史、提出技能改进、apply / 回滚 |
 
@@ -177,6 +178,7 @@ Modes:
   sprite                       游戏角色动作、让图动起来、界面循环动画与 Rive 吉祥物
   lucid                        梦出目标截图，用 Three.js 追着建
   backlot                      从一个念头拍到成片
+  tanka-launch                 发布视频工作室：从一个想法到成片的发布视频
   mode-maker                   用 AI 做自定义 mode
   evolve                       启动 Evolution Agent
   /path/to/mode                从本地目录加载

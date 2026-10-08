@@ -1,0 +1,3 @@
+[
+  { "id": "A", "title": "Sound map E + mix", "summary": "SFX set E on the sound map, bed ducked under VO; -14 LUFS.", "recommended": true, "files": ["stages/sound/soundmap.json"], "preview": "stages/sound/options/A-mix.mp4" }
+]

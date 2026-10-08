@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Run a stage script with a Python that has numpy + scipy (the only hard DSP deps of the tanka-launch scripts).
+#   usage: scripts/py <area/script.py> [args…]        e.g.  scripts/py vo/post.py --help
+# Resolution order (first that imports numpy + scipy wins):
+#   1. $TL_PYTHON
+#   2. ~/.pneuma/tanka-launch/venv/bin/python        (make it once with scripts/setup-python.sh)
+#   3. python3 / python3.13 / python3.12 / python3.11 on PATH
+#   4. uv run --no-project --with numpy --with scipy  (ephemeral env from uv's cache; offline first, then online)
+set -u
+export PYTHONDONTWRITEBYTECODE=1          # never write __pycache__ into the installed skill
+# OpenBLAS (numpy/scipy wheels on Linux) threads every small dot product; np.convolve with a long kernel then runs ~6x slower on
+# 4 cores (and far worse on more). One thread is right for these scripts. (macOS wheels use Accelerate and ignore this.)
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ $# -ge 1 ] || { sed -n '2,8p' "$0"; exit 2; }
+script="$1"; shift
+case "$script" in /*) ;; *) script="$HERE/$script" ;; esac
+[ -f "$script" ] || { echo "py: no such script: $script" >&2; exit 2; }
+ok() { "$1" -c 'import numpy, scipy.signal' >/dev/null 2>&1; }
+if [ -n "${TL_PYTHON:-}" ]; then exec "$TL_PYTHON" "$script" "$@"; fi
+for c in "$HOME/.pneuma/tanka-launch/venv/bin/python" python3 python3.13 python3.12 python3.11; do
+  if command -v "$c" >/dev/null 2>&1 && ok "$c"; then exec "$c" "$script" "$@"; fi
+done
+UV="$(command -v uv 2>/dev/null || true)"; [ -n "$UV" ] || UV="$HOME/.local/bin/uv"
+if [ -x "$UV" ]; then
+  for mode in --offline ""; do
+    if "$UV" run $mode --quiet --no-project --python 3.12 --with numpy --with scipy python -c 'import numpy, scipy.signal' >/dev/null 2>&1; then
+      exec "$UV" run $mode --quiet --no-project --python 3.12 --with numpy --with scipy python "$script" "$@"
+    fi
+  done
+fi
+echo "py: no Python with numpy + scipy found. Run: $HERE/setup-python.sh  (or set TL_PYTHON)" >&2
+exit 2

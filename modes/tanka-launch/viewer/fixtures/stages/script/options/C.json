@@ -1,0 +1,104 @@
+{
+  "id": "C",
+  "title": "One question, three teams",
+  "logline": "Sales, support and finance answer the same question from the same sources.",
+  "arc": [
+    "question",
+    "three teams",
+    "one search",
+    "one answer",
+    "lockup"
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "durationS": 4.0,
+      "sceneType": "text-screen",
+      "vo": {
+        "ja": "同じ質問、三つの答え？",
+        "en": "One question. Three answers?"
+      },
+      "onScreen": {
+        "ja": "同じ質問、三つの答え？",
+        "en": "One question. Three answers?"
+      },
+      "density": {
+        "info": 1,
+        "anim": 3
+      },
+      "transitionOut": "carry"
+    },
+    {
+      "id": "s2",
+      "durationS": 12.0,
+      "sceneType": "custom:chat",
+      "vo": {
+        "ja": "営業、サポート、経理。それぞれが別の資料を見ている。",
+        "en": "Sales, support and finance each look in a different place."
+      },
+      "onScreen": {
+        "ja": "",
+        "en": ""
+      },
+      "density": {
+        "info": 4,
+        "anim": 3
+      },
+      "transitionOut": "slide"
+    },
+    {
+      "id": "s3",
+      "durationS": 12.0,
+      "sceneType": "custom:search",
+      "vo": {
+        "ja": "ACMEなら、全員が同じ出典から答える。",
+        "en": "With Acme, everyone answers from the same sources."
+      },
+      "onScreen": {
+        "ja": "出典 · 4 件",
+        "en": "Sources · 4"
+      },
+      "density": {
+        "info": 4,
+        "anim": 4
+      },
+      "transitionOut": "search → answer"
+    },
+    {
+      "id": "s4",
+      "durationS": 10.0,
+      "sceneType": "footage-card",
+      "vo": {
+        "ja": "答えが揃えば、チームは速くなる。",
+        "en": "When the answers line up, the team moves faster."
+      },
+      "onScreen": {
+        "ja": "",
+        "en": ""
+      },
+      "density": {
+        "info": 2,
+        "anim": 3
+      },
+      "transitionOut": "float → lockup"
+    },
+    {
+      "id": "s5",
+      "durationS": 6.0,
+      "sceneType": "logo-lockup",
+      "vo": {
+        "ja": "ACME。チームの知識を、すぐに。",
+        "en": "Acme. Find anything your team knows."
+      },
+      "onScreen": {
+        "ja": "ACME",
+        "en": "ACME"
+      },
+      "density": {
+        "info": 1,
+        "anim": 2
+      },
+      "transitionOut": "end"
+    }
+  ]
+}

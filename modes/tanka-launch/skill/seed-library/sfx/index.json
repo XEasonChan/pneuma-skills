@@ -1,0 +1,11 @@
+{
+ "_note": "UI samples used by sfx/render.py (clicks + typing). None are shipped: common/kit.py synthesises procedural voices for every role when a sample file is missing. A run may drop its own licensed samples here (ui-click.mp3, ui-typing.mp3, or a set-a/ folder with an index.json) to replace the procedural ones.",
+ "ui-click": {
+  "file": "ui-click.mp3",
+  "role": "click / tap / send press (optional sample; procedural when missing)"
+ },
+ "ui-typing": {
+  "file": "ui-typing.mp3",
+  "role": "typing run, looped (optional sample; procedural when missing)"
+ }
+}

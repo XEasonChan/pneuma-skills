@@ -1,0 +1,11 @@
+{
+ "units": "frames", "fps": 30, "formats": ["short-16x9"], "languages": ["ja", "en"], "brand": {"display": "ACME", "match": ["Acme"]},
+ "scenes": [
+  {"id": "S1", "type": "text-screen", "from": 0, "len": 270, "props": {"lines": [{"text": {"en": "Your team already knows.", "ja": "答えは、 チームの中に。"}}]}},
+  {"id": "S2", "type": "product-demo", "from": 270, "len": 330, "props": {
+     "events": [{"at": 0.8, "kind": "typing", "end": 2.6, "label": "the question types"}, {"at": 2.9, "kind": "send", "label": "send"},
+                {"at": 3.6, "kind": "notify", "label": "the answer arrives"}, {"at": 5.2, "kind": "card-flip", "label": "a source card turns"},
+                {"at": 6.4, "kind": "confirm", "label": "the source is confirmed"}, {"at": 7.2, "kind": "notch", "n": 4, "label": "a timeline scrubs"},
+                {"at": 9.6, "kind": "lockup", "label": "ACME lockup"}]}}
+ ]
+}

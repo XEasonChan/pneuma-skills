@@ -1,0 +1,59 @@
+{
+  "id": "A",
+  "title": "Steady pulse",
+  "bed": {
+    "source": "library",
+    "file": "A-bed.mp3",
+    "key": "D minor",
+    "bpmMap": [
+      {
+        "from": 0,
+        "to": 5,
+        "bpm": 92,
+        "feel": "intro"
+      },
+      {
+        "from": 5,
+        "to": 12.5,
+        "bpm": 96,
+        "feel": "question"
+      },
+      {
+        "from": 12.5,
+        "to": 22.5,
+        "bpm": 104,
+        "feel": "search"
+      },
+      {
+        "from": 22.5,
+        "to": 31,
+        "bpm": 100,
+        "feel": "night"
+      },
+      {
+        "from": 31,
+        "to": 39,
+        "bpm": 110,
+        "feel": "morning"
+      },
+      {
+        "from": 39,
+        "to": 49,
+        "bpm": 118,
+        "feel": "lift"
+      },
+      {
+        "from": 49,
+        "to": 56.7,
+        "bpm": 104,
+        "feel": "lockup"
+      }
+    ]
+  },
+  "sfxSet": "E",
+  "demo": {
+    "music": "A-bed.mp3",
+    "guideVo": "A-guide.mp3"
+  },
+  "notes": "Synth intro, one electronic kit from the search scene on, no piano. Builds at the morning scene."
+}

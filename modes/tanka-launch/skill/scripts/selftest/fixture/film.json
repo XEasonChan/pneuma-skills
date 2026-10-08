@@ -1,0 +1,11 @@
+{
+ "schema": 1,
+ "run": {"id": "selftest-tiny", "title": "Selftest · tiny two-scene film", "createdAt": "2026-09-28T00:00:00-0700",
+  "brief": {"idea": "Ask Acme: your team's knowledge answers.", "market": "both", "formats": ["short-16x9"], "languages": ["ja", "en"],
+   "sellingPoints": ["one search across every app", "answers with sources"], "sources": {"figma": [], "prd": []},
+   "brand": {"display": "ACME", "match": ["Acme"], "spoken": {"en": "Acme", "ja": "アクメ"}, "heard": {"en": ["akme", "acne"], "ja": ["あくめ"]}},
+   "integrations": {"allow": [], "deny": ["ExampleChat"]}}},
+ "settings": {"budgetUsd": 60, "countdownMin": 30, "mock": true},
+ "stages": {"script": {"state": "confirmed", "options": [{"id": "A", "title": "Tiny", "summary": "two scenes", "recommended": true, "files": ["stages/script/options/A.json"]}], "pick": "A", "pickedBy": "producer"}},
+ "autoRun": {"enabled": false, "until": "roughcut"}
+}

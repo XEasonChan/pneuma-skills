@@ -1,0 +1,3 @@
+[
+  { "id": "A", "title": "VO-locked build", "summary": "Remotion build of script B on the picked VO; 56.7 s, 7 scenes.", "recommended": true, "files": ["remotion/scenes.json"], "preview": "stages/picture/options/A-preview.mp4" }
+]

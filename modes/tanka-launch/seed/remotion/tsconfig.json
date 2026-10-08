@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2020", "module": "ESNext", "moduleResolution": "bundler", "jsx": "react-jsx",
+    "strict": true, "skipLibCheck": true, "resolveJsonModule": true, "esModuleInterop": true, "noEmit": true,
+    "lib": ["DOM", "ES2022"], "types": [],
+    "baseUrl": ".",
+    "paths": {"launch-kit": ["./kit/src/index.ts"], "launch-kit/preview": ["./kit/src/Preview.tsx"]}
+  },
+  "include": ["src", "kit/src"],
+  "exclude": ["kit/src/lint/names-cli.ts"]
+}

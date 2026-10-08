@@ -1,0 +1,18 @@
+{
+  "id": "B",
+  "title": "Calm arc",
+  "bed": {
+    "source": "v2m",
+    "file": "B-bed.mp3",
+    "key": "F major",
+    "bpmMap": [
+      { "from": 0, "to": 12.5, "bpm": 100, "feel": "still" },
+      { "from": 12.5, "to": 31, "bpm": 104, "feel": "thread" },
+      { "from": 31, "to": 49, "bpm": 110, "feel": "morning" },
+      { "from": 49, "to": 56.7, "bpm": 110, "feel": "lockup" }
+    ]
+  },
+  "sfxSet": "A",
+  "demo": { "music": "B-bed.mp3", "guideVo": "B-guide.mp3" },
+  "notes": "Video-to-Music from the picture; calmer pacing with natural pauses for the JA cut."
+}

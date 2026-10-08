@@ -1,0 +1,63 @@
+{
+  "id": "A",
+  "title": "Library first",
+  "items": [
+    {
+      "sceneId": "s1",
+      "kind": "motion",
+      "label": "Type screen · 11 pm",
+      "source": "library",
+      "status": "matched",
+      "file": "thumbs/s1.jpg"
+    },
+    {
+      "sceneId": "s2",
+      "kind": "ui",
+      "label": "Inbox · product UI export",
+      "source": "figma",
+      "status": "matched",
+      "file": "thumbs/s2.jpg"
+    },
+    {
+      "sceneId": "s3",
+      "kind": "ui",
+      "label": "Search results",
+      "source": "figma",
+      "status": "matched",
+      "file": "thumbs/s3.jpg"
+    },
+    {
+      "sceneId": "s4",
+      "kind": "ui",
+      "label": "Draft reply",
+      "source": "figma",
+      "status": "matched",
+      "file": "thumbs/s4.jpg"
+    },
+    {
+      "sceneId": "s5",
+      "kind": "image",
+      "label": "Morning desk",
+      "source": "codex",
+      "status": "generated",
+      "file": "thumbs/s5.jpg",
+      "note": "GPT Image still from the character bible"
+    },
+    {
+      "sceneId": "s6",
+      "kind": "footage",
+      "label": "Owner at desk, sends",
+      "source": "fal",
+      "status": "gap",
+      "note": "Seedance 6 s, est. $1.80"
+    },
+    {
+      "sceneId": "s7",
+      "kind": "logo",
+      "label": "ACME lockup",
+      "source": "library",
+      "status": "matched",
+      "file": "thumbs/s7.jpg"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "A",
+    "title": "Library first",
+    "summary": "6 of 7 scenes from the product's UI exports and the kit; one Seedance clip to generate.",
+    "recommended": true,
+    "files": [
+      "stages/assets/options/A.json"
+    ]
+  },
+  {
+    "id": "B",
+    "title": "More footage",
+    "summary": "Two Seedance clips replace UI scenes; warmer, costs about $3.60 more.",
+    "files": [
+      "stages/assets/options/B.json"
+    ]
+  }
+]

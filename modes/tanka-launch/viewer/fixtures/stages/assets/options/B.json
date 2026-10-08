@@ -1,0 +1,46 @@
+{
+  "id": "B",
+  "title": "More footage",
+  "items": [
+    {
+      "sceneId": "s1",
+      "kind": "footage",
+      "label": "Night office, empty",
+      "source": "fal",
+      "status": "gap",
+      "note": "Seedance 5 s"
+    },
+    {
+      "sceneId": "s2",
+      "kind": "ui",
+      "label": "Inbox · product UI export",
+      "source": "figma",
+      "status": "matched",
+      "file": "thumbs/s2.jpg"
+    },
+    {
+      "sceneId": "s3",
+      "kind": "ui",
+      "label": "Search results",
+      "source": "figma",
+      "status": "matched",
+      "file": "thumbs/s3.jpg"
+    },
+    {
+      "sceneId": "s5",
+      "kind": "footage",
+      "label": "Morning commute",
+      "source": "fal",
+      "status": "gap",
+      "note": "Seedance 6 s"
+    },
+    {
+      "sceneId": "s7",
+      "kind": "logo",
+      "label": "ACME lockup",
+      "source": "library",
+      "status": "matched",
+      "file": "thumbs/s7.jpg"
+    }
+  ]
+}

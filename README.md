@@ -84,6 +84,7 @@ When humans and code agents co-create content, they need more than a chat window
 | **sprite** | Character motion assets, organised by what you are making — a move set for a game, your own picture brought to life, a looping animation for a page, or a mascot for an app. Design a character once (or start from your image), then make each motion from a reference-guided sheet or a clip shot on chroma green: poses are sliced by their ink, aligned on the feet (a jump keeps its height), keyed with an un-mixing keyer, and packed into `atlas.json` or an Aseprite-format sheet for Phaser and PixiJS. A breathing idle from one still needs no model call; pixel art stays on its lattice with a pinned palette and colourways; four-direction sets mirror a side or draw it. Seamless transparent UI loops export as WebP, APNG, WebM and Lottie, any motion as MP4, MOV, WebM, APNG, Lottie or a PNG sequence, and a whole character as one Rive file. Keying, cycle detection, pixel lattices, ink slicing and breathing are ported from [aldegad/sprite-gen](https://github.com/aldegad/sprite-gen) |
 | **lucid** | A closed loop between a picture and a program — the agent dreams a target screenshot with image generation, locks it, builds a static Three.js scene toward it, and a fresh-context judge scores composition, lighting, materials and details every round until the live frame matches; Blender and image-to-3D sit on the asset ladder. Ported from [achimala/dream-loop](https://github.com/achimala/dream-loop) (MIT) |
 | **backlot** | From an idea to a finished cut — screenplay, character and set bible, storyboard frames, 3D greybox previz, model-rendered takes, dialogue and music; the creator approves every stage before the next one starts, and the greybox stage is what fixes space, action and camera before any video model paints the look. Practice adapted from [modengsir/blender-video-workflows](https://github.com/modengsir/blender-video-workflows) (MIT) |
+| **tanka-launch** | Launch Studio — turn an idea or a selling point into finished launch videos: script, music and rhythm, voice, VO, assets, picture and sound land on a node canvas as options with a countdown each, auto-run can carry a run to the rough cut, and the rough cut is the one hard gate before every format and language is mastered and delivered. Music comes first and becomes the film's one clock; every paid call is priced against a per-run budget cap; a mock mode rehearses the whole pipeline for $0 |
 | **mode-maker** | Create custom modes with AI — fork, play-test, publish |
 | **evolve** | Evolution Agent — analyze history, propose skill improvements, apply/rollback |
 
@@ -176,6 +177,7 @@ Modes:
   sprite                       Game characters, living pictures, UI loops and Rive mascots
   lucid                        Dream a screenshot, build it in Three.js
   backlot                      From an idea to a finished cut
+  tanka-launch                 Launch Studio: an idea to finished launch videos
   mode-maker                   Create custom modes with AI
   evolve                       Launch the Evolution Agent
   /path/to/mode                Load from a local directory

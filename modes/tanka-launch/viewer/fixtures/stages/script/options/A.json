@@ -1,0 +1,142 @@
+{
+  "id": "A",
+  "title": "Lost file",
+  "logline": "A client needs last year's proposal now, and nobody remembers where it went. ACME finds it.",
+  "arc": [
+    "question",
+    "gap",
+    "search",
+    "answer",
+    "share",
+    "team",
+    "lockup"
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "durationS": 4.5,
+      "sceneType": "text-screen",
+      "vo": {
+        "ja": "あの資料、どこだっけ？",
+        "en": "Where did that file go?"
+      },
+      "onScreen": {
+        "ja": "あの資料、どこだっけ？",
+        "en": "Where did that file go?"
+      },
+      "density": {
+        "info": 1,
+        "anim": 3
+      },
+      "transitionOut": "carry"
+    },
+    {
+      "id": "s2",
+      "durationS": 8.0,
+      "sceneType": "custom:inbox",
+      "vo": {
+        "ja": "クライアントから、去年の提案書について質問が届く。",
+        "en": "A client asks about last year's proposal."
+      },
+      "onScreen": {
+        "ja": "Re: 昨年のご提案について",
+        "en": "Re: last year's proposal"
+      },
+      "density": {
+        "info": 3,
+        "anim": 2
+      },
+      "transitionOut": "card → chip"
+    },
+    {
+      "id": "s3",
+      "durationS": 6.0,
+      "sceneType": "custom:chat",
+      "vo": {
+        "ja": "今日の担当は、当時いなかった。",
+        "en": "Nobody on today's team was there."
+      },
+      "onScreen": {
+        "ja": "担当：営業チーム",
+        "en": "On it: the sales team"
+      },
+      "density": {
+        "info": 2,
+        "anim": 2
+      },
+      "transitionOut": "cut"
+    },
+    {
+      "id": "s4",
+      "durationS": 10.5,
+      "sceneType": "custom:search",
+      "vo": {
+        "ja": "ACMEなら、すべてのアプリから一度に探せる。",
+        "en": "Acme searches every app your team uses, at once."
+      },
+      "onScreen": {
+        "ja": "3 件の候補 · 1 件の決定版",
+        "en": "3 matches · 1 final version"
+      },
+      "density": {
+        "info": 4,
+        "anim": 4
+      },
+      "transitionOut": "search → answer"
+    },
+    {
+      "id": "s5",
+      "durationS": 9.0,
+      "sceneType": "custom:answer",
+      "vo": {
+        "ja": "出典つきで、すぐに答えが届く。",
+        "en": "The answer arrives, with its sources."
+      },
+      "onScreen": {
+        "ja": "出典 · 2 件",
+        "en": "Sources · 2"
+      },
+      "density": {
+        "info": 3,
+        "anim": 3
+      },
+      "transitionOut": "send → reveal"
+    },
+    {
+      "id": "s6",
+      "durationS": 9.5,
+      "sceneType": "footage-card",
+      "vo": {
+        "ja": "チームの誰もが、同じ答えにたどり着ける。",
+        "en": "Everyone on the team gets to the same answer."
+      },
+      "onScreen": {
+        "ja": "",
+        "en": ""
+      },
+      "density": {
+        "info": 2,
+        "anim": 4
+      },
+      "transitionOut": "float → lockup"
+    },
+    {
+      "id": "s7",
+      "durationS": 6.0,
+      "sceneType": "logo-lockup",
+      "vo": {
+        "ja": "ACME。チームの知識を、すぐに。",
+        "en": "Acme. Find anything your team knows."
+      },
+      "onScreen": {
+        "ja": "ACME",
+        "en": "ACME"
+      },
+      "density": {
+        "info": 1,
+        "anim": 2
+      },
+      "transitionOut": "end"
+    }
+  ]
+}

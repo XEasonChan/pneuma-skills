@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "run": {
+    "id": "new-run",
+    "title": "New launch run",
+    "createdAt": "2026-09-28T00:00:00.000Z",
+    "brief": {
+      "idea": "",
+      "sources": {
+        "figma": [],
+        "prd": []
+      },
+      "market": "both",
+      "formats": [
+        "short-16x9",
+        "short-9x16"
+      ],
+      "languages": [
+        "ja",
+        "en",
+        "en-jasub"
+      ],
+      "sellingPoints": []
+    }
+  },
+  "settings": {
+    "budgetUsd": 60,
+    "countdownMin": 30,
+    "mock": false
+  },
+  "stages": {
+    "idea": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "script": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "music": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "voice": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "vo": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "assets": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "picture": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "sound": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "roughcut": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "finals": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    },
+    "deliver": {
+      "state": "empty",
+      "options": [],
+      "pick": null,
+      "pickedBy": null,
+      "deadline": null,
+      "approval": null,
+      "notes": ""
+    }
+  },
+  "autoRun": {
+    "enabled": false,
+    "until": "roughcut"
+  },
+  "seq": 0,
+  "events": [
+    {
+      "at": "2026-09-28T00:00:00.000Z",
+      "event": "init",
+      "detail": {
+        "seed": true
+      }
+    }
+  ]
+}

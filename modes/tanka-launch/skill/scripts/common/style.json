@@ -1,0 +1,96 @@
+{
+ "_note": "MACHINE COPY of references/style-presets.md (music-palette, music-negatives, music-briefs) plus the structured presets (brand, integrations, tags, section_styles, arc, licence_note). Every value is an EDITABLE EXAMPLE, not a fact about any company. The .md is the source of truth for the music text and wins: common/style.py reads the .md first and uses this file as a fallback. Keep both in step.",
+ "brand": {
+  "_note": "The run's brand rule (W.brand(); a run overrides it in film.json run.brief.brand). Empty display = no transform and no brand checks. Example: {\"display\": \"ACME\", \"match\": [\"Acme\"], \"spoken\": {\"en\": \"Acme\", \"ja\": \"アクメ\"}, \"heard\": {\"en\": [\"acne\", \"akme\"], \"ja\": [\"アクメ\"]}}",
+  "display": "",
+  "match": [],
+  "spoken": {},
+  "heard": {}
+ },
+ "integrations": {
+  "_note": "Services the product does / does not integrate with (lint R11; a run overrides it in film.json run.brief.integrations). Example: {\"allow\": [\"Gmail\", \"Slack\"], \"deny\": [\"ExampleChat\"]}",
+  "allow": [],
+  "deny": []
+ },
+ "pronunciation": {
+  "_note": "Per-language pronunciation dictionary: {lang: {written form: what the TTS reads}} (W.tts_text; a run overrides it in film.json run.brief.pronunciation). Keyed by language because one word can be read differently in each. Example: {\"en\": {\"ACME\": \"Akme\", \"SaaS\": \"sass\"}, \"ja\": {\"ACME\": \"アクメ\", \"異動\": \"いどう\"}}",
+  "en": {},
+  "ja": {}
+ },
+ "palette": "Launch-film electronic pop. Minor-mode pop loop at about 100–104 BPM (E1 measured 102.0). Punchy short electronic kick; claps on 2 and 4; syncopated 16th hats and shaker; a bouncy plucked synth-bass ostinato; synth chords and short synth stabs. One continuous groove with two states: filtered and restrained until the product appears, then the groove. A 1-bar stop before each turn; a low hit and a 1-bar lift into the drop on the product's first act; hold after the drop; end on a button (a stop plus one chord or chime) landing on the logo lockup. Opening (until the product is introduced): ethereal with a little echo, not silent, not a drone; a dark, soft koto-like pluck, breath or air, a soft wood knock are allowed here only. One kit, one key, one continuous bar sequence for the whole film.",
+ "arc": "filtered and restrained until the product appears, then the groove; a 1-bar stop before each turn; a low hit and a 1-bar lift into the drop on the product's first act; hold after the drop; end on a button (a stop plus one chord or chime) landing on the logo lockup",
+ "opening": "the opening (until the product is introduced) is ethereal with a little echo, not silent, not a drone; a dark, soft koto-like pluck, breath or air, a soft wood knock are allowed here only",
+ "under_vo": "sits under a voiceover: under every line the kick drops out, the mids are cut; steps forward only in pauses",
+ "negatives": [
+  "piano of any kind (felt, electric, grand; no piano motif, no piano opening or outro)",
+  "marimba",
+  "glockenspiel",
+  "candy-like bright bouncy plucks",
+  "repeating \"candy\" upbeats",
+  "drones or pads that hum",
+  "continuous bells",
+  "rin bowl",
+  "risers",
+  "unmotivated sudden upbeats",
+  "hard switches between sections in different keys or kits",
+  "koto, shamisen or other Japanese instruments after the opening",
+  "vocals"
+ ],
+ "tags": [
+  "electronic pop",
+  "tech launch film",
+  "minor key",
+  "102 BPM",
+  "groovy",
+  "clean",
+  "instrumental"
+ ],
+ "briefs_that_worked": {
+  "B": "Airy, ethereal, minimal opening; gentle modern electronic build as the product appears; calm, confident tech brand film; no vocals.",
+  "E1": "Launch-film electronic pop, minor key, ~102 BPM, punchy short kick, claps on 2 and 4, syncopated 16th hats and shaker, bouncy plucked synth-bass ostinato, synth chords and short stabs; filtered and restrained until the product appears, then one continuous groove; resolves on a clean button at the logo; no piano, marimba, glockenspiel, drones, risers or sudden upbeats."
+ },
+ "section_styles": {
+  "intro": [
+   "filtered",
+   "restrained",
+   "airy",
+   "a little echo",
+   "soft dark koto-like pluck",
+   "breath and air",
+   "no drums yet"
+  ],
+  "suspense": [
+   "sparse",
+   "slow",
+   "suspenseful",
+   "muted kick on 1 only",
+   "low-passed chords"
+  ],
+  "build": [
+   "groove builds",
+   "claps on 2 and 4",
+   "16th hats enter",
+   "plucked synth-bass ostinato"
+  ],
+  "climax": [
+   "full groove",
+   "punchy short kick",
+   "syncopated 16th hats and shaker",
+   "short synth stabs",
+   "confident"
+  ],
+  "release": [
+   "groove thins",
+   "half-time feel",
+   "warm synth chords",
+   "calm"
+  ],
+  "outro": [
+   "clean button ending",
+   "a stop then one final chord",
+   "rings out briefly"
+  ]
+ },
+ "licence_note": "Generated music and samples carry their provider's licence terms: check that your plan covers the intended use (ads, events, public release) before anything leaves review.",
+ "negatives_text": "No piano of any kind (felt, electric, grand; no piano motif, no piano opening or outro). No marimba, glockenspiel, candy-like bright bouncy plucks, repeating \"candy\" upbeats. No drones or pads that hum; no continuous bells; no rin bowl. No risers, no unmotivated sudden upbeats, no hard switches between sections in different keys or kits. No koto, shamisen or other Japanese instruments after the opening. No vocals. Music starts at 0 s, no silence."
+}

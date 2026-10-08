@@ -1,0 +1,142 @@
+{
+  "id": "B",
+  "title": "Late request",
+  "logline": "It is 11 pm, the office is dark, and a client's question gets a sourced draft — waiting for its owner in the morning.",
+  "arc": [
+    "night",
+    "question",
+    "search",
+    "draft",
+    "morning",
+    "owner sends",
+    "lockup"
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "durationS": 5.0,
+      "sceneType": "text-screen",
+      "vo": {
+        "ja": "夜 11 時。オフィスには誰もいない。",
+        "en": "11 pm. The office is empty."
+      },
+      "onScreen": {
+        "ja": "23:04",
+        "en": "11:04 PM"
+      },
+      "density": {
+        "info": 1,
+        "anim": 2
+      },
+      "transitionOut": "carry"
+    },
+    {
+      "id": "s2",
+      "durationS": 7.5,
+      "sceneType": "custom:inbox",
+      "vo": {
+        "ja": "海外のクライアントから、契約条件について質問が届く。",
+        "en": "A client overseas asks about the contract terms."
+      },
+      "onScreen": {
+        "ja": "Re: 契約条件の確認",
+        "en": "Re: checking our terms"
+      },
+      "density": {
+        "info": 3,
+        "anim": 2
+      },
+      "transitionOut": "card → search"
+    },
+    {
+      "id": "s3",
+      "durationS": 10.0,
+      "sceneType": "custom:search",
+      "vo": {
+        "ja": "ACMEは、関係する資料をすべて見つける。",
+        "en": "Acme finds every document that matters."
+      },
+      "onScreen": {
+        "ja": "2025年4月 · 合意済みの条件",
+        "en": "April 2025 · the agreed terms"
+      },
+      "density": {
+        "info": 4,
+        "anim": 4
+      },
+      "transitionOut": "search → draft"
+    },
+    {
+      "id": "s4",
+      "durationS": 8.5,
+      "sceneType": "custom:draft",
+      "vo": {
+        "ja": "返信を下書きして、あなたの確認を待つ。勝手には送らない。",
+        "en": "It drafts a reply and waits for you. It never sends on its own."
+      },
+      "onScreen": {
+        "ja": "下書き · 確認待ち",
+        "en": "Draft · waiting for you"
+      },
+      "density": {
+        "info": 3,
+        "anim": 2
+      },
+      "transitionOut": "night → morning"
+    },
+    {
+      "id": "s5",
+      "durationS": 8.0,
+      "sceneType": "custom:summary",
+      "vo": {
+        "ja": "朝。要点と下書きが、もう揃っている。",
+        "en": "Morning. The summary and the draft are ready."
+      },
+      "onScreen": {
+        "ja": "おはようございます · 確認 1 件",
+        "en": "Good morning · 1 to review"
+      },
+      "density": {
+        "info": 3,
+        "anim": 3
+      },
+      "transitionOut": "summary → send"
+    },
+    {
+      "id": "s6",
+      "durationS": 10.0,
+      "sceneType": "custom:chat",
+      "vo": {
+        "ja": "あなたが確認して、送る。いつもの丁寧さで。",
+        "en": "You check it and send it — with the care your client expects."
+      },
+      "onScreen": {
+        "ja": "送信済み",
+        "en": "Sent"
+      },
+      "density": {
+        "info": 2,
+        "anim": 3
+      },
+      "transitionOut": "send → lockup"
+    },
+    {
+      "id": "s7",
+      "durationS": 7.7,
+      "sceneType": "logo-lockup",
+      "vo": {
+        "ja": "ACME。チームの知識を、すぐに。",
+        "en": "Acme. Find anything your team knows."
+      },
+      "onScreen": {
+        "ja": "ACME",
+        "en": "ACME"
+      },
+      "density": {
+        "info": 1,
+        "anim": 2
+      },
+      "transitionOut": "end"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+ "id": "A", "title": "Tiny · the team's knowledge answers", "logline": "A question, and the team's knowledge answers.", "arc": "stillness -> the answer arrives",
+ "scenes": [
+  {"id": "S1", "durationS": 9.0, "sceneType": "text-screen",
+   "vo": {"en": "Your team already knows the answer.", "ja": "答えは、もうチームの中にある。"},
+   "onScreen": {"en": "Your team already knows.", "ja": "答えは、チームの中に。"}, "density": {"info": "low", "anim": "mid"}, "transitionOut": "carry"},
+  {"id": "S2", "durationS": 11.0, "sceneType": "product-demo",
+   "vo": {"en": "Ask Acme, and it finds the answer across every app your team uses.", "ja": "ACMEに聞けば、チームのどのアプリからでも答えを見つけます。"},
+   "onScreen": {"en": "Ask ACME.", "ja": "ACMEに聞く。"}, "density": {"info": "mid", "anim": "high"}, "transitionOut": "cut"}
+ ]
+}

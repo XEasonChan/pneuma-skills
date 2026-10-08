@@ -1,0 +1,30 @@
+{
+ "id": "placeholder-pulse",
+ "title": "Placeholder · steady pulse (procedural)",
+ "bpm": 102.0,
+ "key": "A minor",
+ "sfxSet": "E",
+ "placeholder": {
+  "bpm": 102,
+  "bars": 24,
+  "key": "A",
+  "minor": true,
+  "introBars": 4,
+  "seed": 1,
+  "airy": false
+ },
+ "description": "Minor-key electronic pulse: 4 bars of pad and hats, then kick on every beat, claps on 2 and 4, a root bass and a one-chord-per-bar pad.",
+ "recommended_for": "the default bed for mock runs and the selftest (one steady grid)",
+ "provider": "procedural",
+ "mode": "placeholder",
+ "model": "scripts/common/placeholder_beds.py",
+ "tags": [
+  "placeholder"
+ ],
+ "shelf_5k_minus4db": false,
+ "licenceSafe": true,
+ "licence": "Procedural placeholder synthesised locally by placeholder_beds.py (no samples, no provider). For rehearsals and tests; replace with the run's own licensed bed before release.",
+ "source": "synthesised on first use into the cache dir ($TL_CACHE_DIR)",
+ "file": "placeholder-pulse.flac",
+ "default": true
+}

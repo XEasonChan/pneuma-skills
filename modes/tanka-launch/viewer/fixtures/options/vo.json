@@ -1,0 +1,3 @@
+[
+  { "id": "A", "title": "Best measured takes", "summary": "Take with the cleanest read-check per line; JA at natural pace.", "recommended": true, "files": ["stages/vo/lines.json"] }
+]
